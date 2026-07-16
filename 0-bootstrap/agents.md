@@ -16,6 +16,7 @@ Rules:
 - Only route inbox snippets to `5-evidence/signal-clusters/` when the input is primarily a set of weak signals or messy notes.
 - If blocked by missing human input, add an item to `governance/input-queue.md`.
 - Treat direct files in `6-raw/inbox/` as the current flat drop zone. In upgraded workspaces, also treat legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, and `new/` as unprocessed input.
+- Before inbox synthesis, validate the workspace with `mole doctor` and run `mole inbox audit`; the audit is recursive and identifies live files not covered by processing receipts. Run it again before completion and never report a no-op while unexplained files remain.
 - In shared inboxes, claim `governance/inbox-processing.lock.json` before processing when coordination is needed. Locks prevent overlap; JSON receipts are the durable processing record.
 - After promoting an inbox artefact, update relevant indexes and summaries, write a retrieval receipt, and only then remove or archive the inbox copy.
 - When completing inbox processing, run `mole inbox complete --processed <path> ... "summary"` and include only inbox items that were actually processed. Do not count skipped items, inspected-only items, or raw content in metrics files.

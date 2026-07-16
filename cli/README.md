@@ -72,6 +72,7 @@ mole product-update "Sales leadership" quarter --format teams
 | `mole synthesise <target>` | Prints an agent instruction for synthesising a target using the Mole operating model. |
 | `mole review <target>` | Prints an agent instruction for reviewing a target and surfacing next actions. |
 | `mole inbox claim [processor]` | Claims inbox processing with a lightweight file lock. |
+| `mole inbox audit` | Recursively audits the live inbox, validates the Mole root, and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
 | `mole upgrade` | Updates the globally installed Mole CLI from `github:simplybenuk/product-mole#main`. |
@@ -91,5 +92,7 @@ For upgraded existing workspaces, run:
 ```bash
 mole metrics backfill
 ```
+
+Before synthesis, run `mole inbox audit`. It excludes the instructional root `README.md` and retained `archive/` content, scans legacy nested inbox folders, and uses processing receipts to identify files that still need an explicit disposition. Run it again before completion; an inbox synthesis run should not be reported as a no-op while unexplained files remain.
 
 Backfill reads `governance/run-receipts/inbox-processing/*.json` and counts only receipt `processed` paths with valid completion dates. It does not infer from raw folders.

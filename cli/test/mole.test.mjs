@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createCaptureFileName, resolveCapturedBy } from '../../lib/capture.mjs';
 import { claimInboxProcessing, completeInboxProcessing } from '../../lib/inbox-processing.mjs';
+import { auditInbox, discoverInboxFiles } from '../../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, getMetricsPaths, recordProcessedInboxItems } from '../../lib/metrics.mjs';
 import {
   buildInsightCaptureContent,
@@ -108,6 +109,7 @@ describe('help', () => {
     assert.match(output, /mole synthesise inbox/);
     assert.match(output, /mole review input-queue/);
     assert.match(output, /mole inbox claim/);
+    assert.match(output, /mole inbox audit/);
     assert.match(output, /mole inbox complete --processed/);
     assert.match(output, /mole metrics backfill/);
     assert.match(output, /mole install skills\s+Install Mole agent skills into ~\/\.agents\/skills/);
@@ -121,6 +123,15 @@ describe('help', () => {
 });
 
 describe('synthesise guidance', () => {
+  it('requires root validation and a final recursive inbox audit', () => {
+    const result = runCli(['synthesise', 'inbox']);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /mole doctor/);
+    assert.match(result.stdout, /mole inbox audit/);
+    assert.match(result.stdout, /unexplained unprocessed files remain/);
+  });
+
   it('points inbox synthesis at living personas', () => {
     const result = runCli(['synthesise', 'inbox']);
 
@@ -435,6 +446,54 @@ describe('capture attribution metadata', () => {
 });
 
 describe('inbox processing lock and receipt', () => {
+  it('discovers nested live inbox files while excluding README and archive content', () => {
+    withTempInstance((dir) => {
+      fs.mkdirSync(path.join(dir, '6-raw', 'inbox', 'observations'), { recursive: true });
+      fs.mkdirSync(path.join(dir, '6-raw', 'inbox', 'archive', 'old'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'README.md'), 'instructions');
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'deck.pptx'), 'deck');
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'observations', 'note.md'), 'note');
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'archive', 'old', 'done.md'), 'done');
+
+      assert.deepEqual(discoverInboxFiles(dir), [
+        '6-raw/inbox/deck.pptx',
+        '6-raw/inbox/observations/note.md'
+      ]);
+    });
+  });
+
+  it('filters files already recorded as processed and rejects a non-Mole root', () => {
+    withTempInstance((dir) => {
+      for (const relative of [
+        'mole.instance.yaml',
+        '0-bootstrap',
+        '1-routing',
+        '2-summaries',
+        '3-indexes',
+        '4-context',
+        '5-evidence',
+        '6-raw'
+      ]) {
+        const target = path.join(dir, relative);
+        if (path.extname(target)) fs.writeFileSync(target, 'mole_version: 0.2.8\n');
+        else fs.mkdirSync(target, { recursive: true });
+      }
+      fs.mkdirSync(path.join(dir, '6-raw', 'inbox'), { recursive: true });
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'done.md'), 'done');
+      fs.writeFileSync(path.join(dir, '6-raw', 'inbox', 'new.md'), 'new');
+      fs.mkdirSync(path.join(dir, 'governance', 'run-receipts', 'inbox-processing'), { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, 'governance', 'run-receipts', 'inbox-processing', 'receipt.json'),
+        JSON.stringify({ completed_at: '2026-07-16T12:00:00.000Z', processed: ['6-raw/inbox/done.md'] })
+      );
+
+      const result = auditInbox(dir);
+      assert.deepEqual(result.unprocessed, ['6-raw/inbox/new.md']);
+      assert.deepEqual(result.processed, ['6-raw/inbox/done.md']);
+      assert.throws(() => auditInbox(path.join(dir, 'missing')), /not a Mole workspace root/);
+    });
+  });
+
   it('allows one claim and fails concurrent claims safely', () => {
     withTempInstance((dir) => {
       const first = claimInboxProcessing(dir, {
@@ -473,7 +532,7 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(result.receipt.lock_id, 'lock-1');
       assert.equal(result.receipt.claimed_by, 'Ada');
       assert.deepEqual(result.receipt.processed, ['6-raw/inbox/a.md']);
-      assert.match(result.receiptPath, /governance\/run-receipts\/inbox-processing\//);
+      assert.match(result.receiptPath, /governance[\\/]run-receipts[\\/]inbox-processing[\\/]/);
 
       const next = claimInboxProcessing(dir, {
         claimedBy: 'Grace',
@@ -498,7 +557,7 @@ describe('inbox processing lock and receipt', () => {
       assert.match(result.receipt.lock_id, /^unclaimed-/);
       assert.equal(result.receipt.claimed_by, 'Ada');
       assert.deepEqual(result.receipt.processed, ['6-raw/inbox/a.md']);
-      assert.match(result.receiptPath, /governance\/run-receipts\/inbox-processing\//);
+      assert.match(result.receiptPath, /governance[\\/]run-receipts[\\/]inbox-processing[\\/]/);
       assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
     });
   });

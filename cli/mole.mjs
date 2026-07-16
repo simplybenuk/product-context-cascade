@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createCaptureFileName, resolveCapturedBy } from '../lib/capture.mjs';
 import { claimInboxProcessing, completeInboxProcessing } from '../lib/inbox-processing.mjs';
+import { auditInbox } from '../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, recordProcessedInboxItems } from '../lib/metrics.mjs';
 
 const args = process.argv.slice(2);
@@ -59,6 +60,7 @@ Usage:
   mole synthesise <target>             Print an agent instruction for synthesis work.
   mole review <target>                 Print an agent instruction for review work.
   mole inbox claim [processor]         Claim inbox processing with a file lock.
+  mole inbox audit                    Audit the recursive live inbox and processed receipts.
   mole inbox complete [--processed path] [summary]
                                       Write a receipt, record processed paths, and release the lock.
   mole metrics backfill               Rebuild metrics from inbox processing receipts.
@@ -601,6 +603,18 @@ function upgradeTool() {
 }
 
 function runInboxCommand(action, values = []) {
+  if (action === 'audit') {
+    const result = auditInbox(cwd);
+    console.log('Mole inbox audit');
+    console.log(`workspace root  ${result.workspaceRoot}`);
+    console.log(`live files      ${result.candidates.length}`);
+    console.log(`processed files ${result.processed.length}`);
+    console.log(`unprocessed     ${result.unprocessed.length}`);
+    for (const item of result.unprocessed) console.log(`- ${item}`);
+    if (result.unprocessed.length) process.exitCode = 1;
+    return;
+  }
+
   if (action === 'claim') {
     const result = claimInboxProcessing(cwd, {
       claimedBy: values.join(' ')
@@ -714,7 +728,7 @@ if (isDirectRun) {
     case 'synthesise': {
       const target = subcommand || 'the requested target';
       const personaInstruction = subcommand === 'inbox' ? ' Treat `6-raw/inbox/` as the flat capture/drop zone; legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, or `new/` are still valid unprocessed input in existing workspaces. If user/customer signals are relevant to a durable user type, update or create evidence-backed personas in `4-context/personas.md`. If internal stakeholder signals, org-chart facts, leadership asks, or update preferences are relevant, update or create evidence-backed stakeholder memory in `4-context/stakeholders.md`. If relevant `2-summaries/` or `3-indexes/` files are blank, placeholder-only, or still contain starter-template content, treat that as a material top-layer gap and populate them from the synthesised durable context. When complete, always run `mole inbox complete --processed <path> ... "summary"` with one processed path for each inbox item actually processed so a JSON receipt and metrics are written.' : '';
-      console.log(`Suggested agent instruction:\n\nSynthesise ${target} using the Mole operating model: capture low, distil up, retrieve top-down.${personaInstruction}`);
+      console.log(`Suggested agent instruction:\n\nBefore synthesis, validate the workspace root with \`mole doctor\` and run \`mole inbox audit\`. Treat every recursively discovered non-README file outside \`6-raw/inbox/archive/\` as a candidate. Reconcile the audit's candidate list against the paths you actually process, explicitly report skipped paths, and rerun \`mole inbox audit\` before finishing; do not declare a no-op while unexplained unprocessed files remain. Then synthesise ${target} using the Mole operating model: capture low, distil up, retrieve top-down.${personaInstruction}`);
       break;
     }
     case 'review':
