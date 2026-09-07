@@ -163,6 +163,15 @@ Never delete raw inputs from a shared inbox before the promoted output and retri
 
 ### Processing lock and receipt
 
+Before synthesising, validate the workspace and audit the complete inbox tree:
+
+```bash
+mole doctor
+mole inbox audit
+```
+
+The audit must scan recursively, including legacy `quick-notes/`, `messages/`, `observations/`, and `new/` folders. It excludes the instructional root `README.md` and retained `archive/` content, then reconciles live files against JSON processing receipts. Run it again before completion and do not report a no-op while unexplained files remain. If a file is intentionally skipped, report its path and reason in the run receipt.
+
 Before synthesising a shared inbox, claim the processing lock:
 
 ```bash

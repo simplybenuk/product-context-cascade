@@ -13,7 +13,7 @@ Turn raw inbox material into more useful, higher-signal outputs while preserving
 
 ## Workflow
 
-1. Read `0-bootstrap/`, `1-routing/`, relevant summaries/indexes, and inspect the current `6-raw/inbox/` contents. Treat direct files as the current flat drop zone; legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, or `new/` are still valid unprocessed input in existing workspaces.
+1. Validate the workspace root with `mole doctor`, then run `mole inbox audit` before reading context. The audit must recursively inspect `6-raw/inbox/`, including legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, or `new/`; treat every non-README file outside retained `archive/` content as a candidate until a receipt or explicit skip disposition explains it. Then read `0-bootstrap/`, `1-routing/`, relevant summaries/indexes, and the audited inbox contents.
 2. Cluster related raw items into themes/signals.
 3. Create or update appropriate files in `5-evidence/` and/or `4-context/` when justified.
 4. For user/customer signals, check `4-context/personas.md`; update a matching persona or create a new persona section when the inbox material is relevant to a durable user type. Keep persona changes evidence-backed and mark weak signals as hypotheses.
@@ -21,7 +21,7 @@ Turn raw inbox material into more useful, higher-signal outputs while preserving
 6. Update `3-indexes/` or `2-summaries/` when the new signal materially changes higher-level context. If relevant summary or index files are blank, placeholder-only, or still contain starter-template content, treat that as a material top-layer gap and populate them from the synthesised durable context. Update `2-summaries/user-summary.md` when persona changes materially affect user understanding.
 7. Add missing human questions to `governance/input-queue.md` if important decisions cannot be made from the available context.
 8. Complete the inbox run with `mole inbox complete --processed <path> ... "summary"`, including one `--processed` flag for each inbox item actually processed. Do not include items that were only inspected, skipped, or left for later. This completion step is required even when no processing lock was claimed because it writes the JSON receipt used by metrics and backfill.
-9. Report what was synthesised, what personas were created or updated, what stakeholders were created or updated, what other files changed, and what still needs human input.
+9. Run `mole inbox audit` again. Do not declare a no-op or complete the run while unexplained live files remain; report every intentionally skipped path and reason. Then report what was synthesised, what personas were created or updated, what stakeholders were created or updated, what other files changed, and what still needs human input.
 
 Avoid over-promoting weak signals. Distil responsibly.
 
