@@ -44,6 +44,8 @@ mole synthesise inbox
 mole refresh top-layers
 mole product-update CEO 2-weeks --format email
 mole product-update "Sales leadership" quarter --format teams
+mole critique idea "Improve regulated-customer onboarding"
+mole critique spec drafts/spec.md
 ```
 
 ## Commands
@@ -61,6 +63,7 @@ mole product-update "Sales leadership" quarter --format teams
 | `mole signal "<text>"` | Alias for `mole insight`. |
 | `mole insight --stakeholder CEO "<text>"` | Captures an insight with stakeholder metadata for later synthesis. |
 | `mole product-update <audience> <timescale> --format <format>` | Prints an agent instruction for a stakeholder-specific product update. |
+| `mole critique <target> [claim-or-path]` | Prints an agent instruction for a context-grounded critique. |
 | `mole bootstrap-context` | Prints an agent instruction for first-time summary/index population. |
 | `mole refresh top-layers` | Prints an agent instruction for refreshing stale, blank, or incomplete summaries and indexes. |
 | `mole create roadmap [output-path]` | Creates a roadmap draft from the roadmap template. |

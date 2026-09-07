@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-11",
+  "updated_at": "2026-09-07",
   "completed": [
     {
       "id": "instance-lifecycle-001",
@@ -259,6 +259,31 @@
       "validation": [
         "npm test",
         "rg -n \"mole metrics backfill|run-receipts/inbox-processing|does not infer\" README.md cli/README.md spec/architecture/spec-product-mole-lightweight-metrics-spec.md"
+      ]
+    },
+    {
+      "id": "command-surface-002",
+      "title": "Implement the documented mole critique command",
+      "category": "command-surface",
+      "chunk": "critique-command",
+      "description": "Add the documented mole critique command as a thin, instruction-producing CLI entry point and align its documentation, skill, and tests.",
+      "acceptance_criteria": [
+        "mole critique idea exits successfully and prints a context-grounded agent instruction.",
+        "The command accepts idea, strategy, roadmap, spec, and decision-brief targets.",
+        "An optional claim or path is included in the critique target.",
+        "Unsupported targets fail with a useful error.",
+        "The instruction requires progressive retrieval, evidence/judgement separation, and a retrieval receipt.",
+        "README, CLI docs, critique docs, and the packaged skill describe the same command behavior."
+      ],
+      "passes": true,
+      "completed_at": "2026-09-07",
+      "validation": [
+        "npm test",
+        "node cli/mole.mjs critique idea \\\"Improve regulated-customer onboarding\\\"",
+        "node cli/mole.mjs critique spec drafts/spec.md",
+        "node cli/mole.mjs critique release (expected non-zero)",
+        "node cli/mole.mjs --help",
+        "git diff --check"
       ]
     }
   ]

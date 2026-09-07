@@ -119,3 +119,13 @@
 - Documented backfill for upgraded existing workspaces and clarified that it does not infer from raw folders or read raw insight content.
 - Validation: `npm test` from `cli/` passed; documentation checks with `rg` passed.
 - Category `molehill-metrics` is complete. No incomplete PRD tasks remain in the category.
+
+2026-09-07
+
+- Completed `command-surface-002` for GitHub issue #17: implemented `mole critique <target> [claim-or-path]` as a thin instruction-producing command for idea, strategy, roadmap, spec, and decision-brief targets.
+- Added invalid-target handling, progressive-retrieval and evidence/judgement guidance, CLI tests, and aligned README, CLI, critique-mode, and packaged-skill documentation.
+- Assumption: the first CLI version should print an agent instruction, consistent with Mole's current thin command architecture, rather than perform the critique itself.
+- Validation: `npm test` passed with 42 tests; supported-target and invalid-target CLI checks passed; `git diff --check` passed.
+- Next priority: human test the critique workflow against a real Mole workspace, then continue with the audit foundations in issue #23 or #18.
+- Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. The instruction-only behavior is intentional and documented; the residual risk is that the CLI does not itself read a target file or produce a judgement.
+- Human test focus: run `mole critique idea "..."` and `mole critique spec <path>`, confirm the output names the expected Mole layers, separates evidence from judgement, and points to the critique template. Confirm an unsupported target fails without a success message.

@@ -69,6 +69,8 @@ mole critique spec
 mole critique decision-brief
 ```
 
+The thin CLI implementation accepts `mole critique <target> [claim-or-path]` for `idea`, `strategy`, `roadmap`, `spec`, and `decision-brief`. It prints an agent instruction that names the retrieval path and expected critique sections. It does not claim that the CLI itself has read the workspace or produced the judgement.
+
 ### Insight / note / signal capture
 Used to capture chat-native or CLI-native raw context without making users think about folders.
 

@@ -7,6 +7,8 @@ description: Critique an idea, strategy, roadmap, spec, or decision using the cu
 
 Use this skill inside a Mole instance.
 
+The CLI entry point is `mole critique <target> [claim-or-path]`. Supported targets are `idea`, `strategy`, `roadmap`, `spec`, and `decision-brief`. The command prints an instruction for this skill; the agent performs the retrieval and critique.
+
 ## Goal
 
 Critique the user's idea, strategy, roadmap, spec, or decision using the actual layered context in the repository.

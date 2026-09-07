@@ -51,6 +51,18 @@ mole critique spec
 mole critique decision-brief
 ```
 
+## CLI behavior
+
+The current CLI supports:
+
+```bash
+mole critique <target> [claim-or-path]
+```
+
+Supported targets are `idea`, `strategy`, `roadmap`, `spec`, and `decision-brief`. The optional second part can be a claim to test or a path to an existing artefact.
+
+The command is intentionally thin. It prints an agent instruction that requires progressive retrieval, separates evidence from judgement, and uses the critique template when creating a file. It does not pretend that the CLI has performed the critique itself.
+
 Chat/agent forms could also support:
 - `/mole-critique-roadmap`
 - `/mole-critique-spec`
