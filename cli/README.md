@@ -11,10 +11,13 @@ Generated workspaces are clean Mole instances, not copies of the Product Mole so
 Install from GitHub:
 
 ```bash
-npm install -g github:simplybenuk/product-mole#main
+npm install -g github:simplybenuk/product-mole#v0.2.8
 mole new my-mole
 cd my-mole
 ```
+
+Replace `v0.2.8` with the stable release you want. Install from `#main` only
+when you explicitly want unreleased changes.
 
 For local source-repo development:
 
@@ -78,7 +81,7 @@ mole critique spec drafts/spec.md
 | `mole inbox audit` | Recursively audits the live inbox, validates the Mole root, and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
-| `mole upgrade` | Updates the globally installed Mole CLI from `github:simplybenuk/product-mole#main`. |
+| `mole upgrade` | Updates the globally installed Mole CLI from the latest unreleased `main` branch. |
 
 ## Inbox completion metrics
 

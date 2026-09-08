@@ -13,11 +13,13 @@ It gives teams a file-based place to capture messy product inputs, distil them i
 ### 1. Install from GitHub
 
 ```bash
-npm install -g github:simplybenuk/product-mole#main
+npm install -g github:simplybenuk/product-mole#v0.2.8
 mole --help
 ```
 
-This installs the `mole` command globally from the `main` branch.
+This installs the `mole` command globally from the tagged `v0.2.8` release.
+Replace the tag with the release you want. Installing from `main` is for
+contributors or users who explicitly want unreleased changes.
 
 ### 2. Create a Mole workspace
 
@@ -95,7 +97,7 @@ After installing skills, ask your agent for Mole-specific work such as:
 | `mole inbox audit` | Recursively audits the live inbox and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
-| `mole upgrade` | Updates the globally installed Mole CLI from `github:simplybenuk/product-mole#main`. |
+| `mole upgrade` | Updates the globally installed Mole CLI from the latest unreleased `main` branch. |
 
 ## Stakeholder memory and product updates
 
@@ -167,9 +169,12 @@ Mole separates the installed tool from generated working instances.
 When the source/tool changes, update the global install:
 
 ```bash
-npm install -g github:simplybenuk/product-mole#main
+npm install -g github:simplybenuk/product-mole#v0.2.8
 mole install skills
 ```
+
+Use a tagged version for stable updates. Use `#main` only when you need the
+latest unreleased source.
 
 If your installed `mole upgrade` only prints upgrade documentation, you are on an older placeholder build. Run the `npm install -g ...` command once; after `0.2.1`, `mole upgrade` performs that update for you.
 

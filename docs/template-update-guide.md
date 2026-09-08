@@ -47,7 +47,7 @@ Prefer reading the changelog and upgrade docs first, rather than blindly merging
 
 ```bash
 git checkout main
-git merge v0.2   # replace with the release you want
+git merge v0.2.8   # replace with the release you want
 ```
 
 Or merge upstream main if you are deliberately tracking unreleased work:
@@ -94,5 +94,5 @@ After a successful upgrade, update `mole.instance.yaml` with:
 - No direct pushes to `main`.
 - Create a branch per change.
 - Open PR and merge after review.
-- Tag stable releases (`v0.1`, `v0.2`, ...).
+- Tag stable releases with full SemVer tags (`v0.2.8`, `v0.3.0`, ...).
 - Include upgrade notes whenever adopter behaviour should change.
