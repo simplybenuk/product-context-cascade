@@ -6,8 +6,15 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createCaptureFileName, resolveCapturedBy } from '../../lib/capture.mjs';
-import { claimInboxProcessing, completeInboxProcessing } from '../../lib/inbox-processing.mjs';
-import { auditInbox, discoverInboxFiles } from '../../lib/inbox-audit.mjs';
+import {
+  claimInboxProcessing,
+  completeInboxProcessing,
+  heartbeatInboxProcessing,
+  checkpointInboxProcessing,
+  inspectInboxProcessing,
+  overrideStaleInboxProcessing
+} from '../../lib/inbox-processing.mjs';
+import { auditInbox, discoverInboxFiles, discoverInboxConflictFiles } from '../../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, getMetricsPaths, recordProcessedInboxItems } from '../../lib/metrics.mjs';
 import {
   buildInsightCaptureContent,
@@ -111,8 +118,11 @@ describe('help', () => {
     assert.match(output, /mole synthesise inbox/);
     assert.match(output, /mole review input-queue/);
     assert.match(output, /mole inbox claim/);
+    assert.match(output, /mole inbox heartbeat/);
+    assert.match(output, /mole inbox checkpoint/);
     assert.match(output, /mole inbox audit/);
-    assert.match(output, /mole inbox complete --processed/);
+    assert.match(output, /mole inbox complete --run-id/);
+    assert.match(output, /mole inbox override-stale/);
     assert.match(output, /mole metrics backfill/);
     assert.match(output, /mole install skills\s+Install Mole agent skills into ~\/\.agents\/skills/);
     assert.match(output, /More help:\n  https:\/\/github\.com\/simplybenuk\/product-mole#readme/);
@@ -145,8 +155,9 @@ describe('synthesise guidance', () => {
     assert.match(result.stdout, /blank, placeholder-only/);
     assert.match(result.stdout, /material top-layer gap/);
     assert.match(result.stdout, /flat capture\/drop zone/);
-    assert.match(result.stdout, /JSON receipt and metrics/);
-    assert.match(result.stdout, /mole inbox complete --processed <path>/);
+    assert.match(result.stdout, /complete with `mole inbox complete --run-id <run-id>/);
+    assert.match(result.stdout, /mole inbox complete --run-id <run-id>/);
+    assert.match(result.stdout, /active owned claim/);
   });
 
   it('prints first-time bootstrap guidance for blank top layers', () => {
@@ -550,7 +561,7 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(first.ok, true);
       assert.equal(first.lock.claimed_by, 'Ada');
       assert.equal(second.ok, false);
-      assert.match(second.message, /already claimed by Ada/);
+      assert.match(second.message, /already belongs.*claimed by Ada/);
     });
   });
 
@@ -558,11 +569,15 @@ describe('inbox processing lock and receipt', () => {
     withTempInstance((dir) => {
       claimInboxProcessing(dir, {
         claimedBy: 'Ada',
+        host: 'host-a',
         now: new Date('2026-05-13T10:11:12.345Z'),
         lockId: 'lock-1'
       });
 
       const result = completeInboxProcessing(dir, {
+        runId: 'lock-1',
+        processor: 'Ada',
+        host: 'host-a',
         completedAt: new Date('2026-05-13T10:21:12.345Z'),
         processed: ['6-raw/inbox/a.md'],
         summary: 'Promoted one note.'
@@ -583,22 +598,39 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
-  it('writes a metrics-compatible receipt without a lock for synthesis runs', () => {
+  it('fails closed without a claim and permits only an audited missing-lock override', () => {
     withTempInstance((dir) => {
-      const result = completeInboxProcessing(dir, {
-        allowMissingLock: true,
+      const refused = completeInboxProcessing(dir, {
         claimedBy: 'Ada',
+        host: 'host-a',
+        completedAt: new Date('2026-05-13T10:21:12.345Z'),
+        processed: ['6-raw/inbox/a.md'],
+        summary: 'Promoted one note.'
+      });
+
+      assert.equal(refused.ok, false);
+      assert.equal(refused.code, 'MISSING_LOCK');
+
+      const result = completeInboxProcessing(dir, {
+        runId: 'override-run',
+        processor: 'Ada',
+        host: 'host-a',
+        overrideMissingLock: true,
+        reason: 'Confirmed the prior local run left no lock behind.',
         completedAt: new Date('2026-05-13T10:21:12.345Z'),
         processed: ['6-raw/inbox/a.md'],
         summary: 'Promoted one note.'
       });
 
       assert.equal(result.ok, true);
-      assert.match(result.receipt.lock_id, /^unclaimed-/);
-      assert.equal(result.receipt.claimed_by, 'Ada');
+      assert.equal(result.receipt.run_id, 'override-run');
+      assert.equal(result.receipt.override.type, 'missing-lock');
+      assert.equal(result.receipt.override.reason, 'Confirmed the prior local run left no lock behind.');
       assert.deepEqual(result.receipt.processed, ['6-raw/inbox/a.md']);
       assert.match(result.receiptPath, /governance[\\/]run-receipts[\\/]inbox-processing[\\/]/);
       assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
+      const overrides = fs.readdirSync(path.join(dir, 'governance', 'run-receipts', 'inbox-processing', 'overrides'));
+      assert.equal(overrides.length, 1);
     });
   });
 
@@ -625,6 +657,8 @@ describe('inbox processing lock and receipt', () => {
       const claim = runCli([
         'inbox',
         'claim',
+        '--run-id',
+        'cli-run-1',
         'Ada'
       ], {
         cwd: dir
@@ -632,6 +666,10 @@ describe('inbox processing lock and receipt', () => {
       const complete = runCli([
         'inbox',
         'complete',
+        '--run-id',
+        'cli-run-1',
+        '--processor',
+        'Ada',
         '--processed',
         '6-raw/inbox/a.md',
         '--processed',
@@ -639,6 +677,22 @@ describe('inbox processing lock and receipt', () => {
         'Promoted',
         'two',
         'notes.'
+      ], {
+        cwd: dir
+      });
+      const retry = runCli([
+        'inbox',
+        'complete',
+        '--run-id',
+        'cli-run-1',
+        '--processor',
+        'Ada',
+        '--processed',
+        '6-raw/inbox/a.md',
+        '--processed',
+        '6-raw/inbox/b.md',
+        'Retried',
+        'completion.'
       ], {
         cwd: dir
       });
@@ -651,6 +705,8 @@ describe('inbox processing lock and receipt', () => {
 
       assert.equal(claim.status, 0);
       assert.equal(complete.status, 0);
+      assert.equal(retry.status, 0);
+      assert.match(retry.stdout, /already exists/);
       assert.deepEqual(receipt.processed, [
         '6-raw/inbox/a.md',
         '6-raw/inbox/b.md'
@@ -659,11 +715,34 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
-  it('records processed paths and writes a receipt when the CLI completes without a prior claim', () => {
+  it('requires an explicit CLI override for completion without a prior claim', () => {
     withTempInstance((dir) => {
+      const refused = runCli([
+        'inbox',
+        'complete',
+        '--processed',
+        '6-raw/inbox/a.md',
+        'Promoted',
+        'one',
+        'note.'
+      ], {
+        cwd: dir,
+        env: { ...process.env, MOLE_CAPTURED_BY: 'Ada' }
+      });
+
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /No active owned inbox processing claim/);
+
       const complete = runCli([
         'inbox',
         'complete',
+        '--override-missing-lock',
+        '--run-id',
+        'cli-override-run',
+        '--processor',
+        'Ada',
+        '--reason',
+        'Confirmed the prior worker stopped before writing its lock.',
         '--processed',
         '6-raw/inbox/a.md',
         'Promoted',
@@ -682,7 +761,8 @@ describe('inbox processing lock and receipt', () => {
 
       assert.equal(complete.status, 0);
       assert.match(complete.stdout, /receipt written/);
-      assert.match(receipt.lock_id, /^unclaimed-/);
+      assert.equal(receipt.run_id, 'cli-override-run');
+      assert.equal(receipt.override.type, 'missing-lock');
       assert.equal(receipt.claimed_by, 'Ada');
       assert.deepEqual(receipt.processed, ['6-raw/inbox/a.md']);
       assert.equal(daily.records.at(-1).count, 1);
@@ -694,7 +774,8 @@ describe('inbox processing lock and receipt', () => {
       claimInboxProcessing(dir, {
         claimedBy: 'Ada',
         now: new Date('2026-06-11T10:00:00.000Z'),
-        lockId: 'lock-1'
+        lockId: 'metrics-failure-run',
+        leaseMs: 365 * 24 * 60 * 60 * 1000
       });
       fs.mkdirSync(path.join(dir, 'governance', 'metrics'), { recursive: true });
       fs.writeFileSync(path.join(dir, 'governance', 'metrics', 'daily.json'), '{broken', 'utf8');
@@ -702,6 +783,10 @@ describe('inbox processing lock and receipt', () => {
       const result = runCli([
         'inbox',
         'complete',
+        '--run-id',
+        'metrics-failure-run',
+        '--processor',
+        'Ada',
         '--processed',
         '6-raw/inbox/a.md',
         'Promoted',
@@ -715,6 +800,255 @@ describe('inbox processing lock and receipt', () => {
       assert.match(result.stdout, /receipt written/);
       assert.match(result.stderr, /metrics update failed/);
       assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
+    });
+  });
+
+  it('stores run and lease metadata and makes repeated claims idempotent', () => {
+    withTempInstance((dir) => {
+      const options = {
+        runId: 'lease-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 60 * 60 * 1000,
+        claimedPaths: ['6-raw/inbox/a.md', '6-raw/inbox/b.md'],
+        now: new Date('2026-09-08T10:00:00.000Z')
+      };
+      const first = claimInboxProcessing(dir, options);
+      const retry = claimInboxProcessing(dir, {
+        ...options,
+        now: new Date('2026-09-08T10:05:00.000Z')
+      });
+
+      assert.equal(first.ok, true);
+      assert.equal(first.lock.run_id, 'lease-run');
+      assert.equal(first.lock.processor, 'Ada');
+      assert.equal(first.lock.host, 'laptop-a');
+      assert.equal(first.lock.started_at, '2026-09-08T10:00:00.000Z');
+      assert.equal(first.lock.heartbeat_at, '2026-09-08T10:00:00.000Z');
+      assert.equal(first.lock.expires_at, '2026-09-08T11:00:00.000Z');
+      assert.deepEqual(first.lock.claimed_paths, ['6-raw/inbox/a.md', '6-raw/inbox/b.md']);
+      assert.equal(retry.ok, true);
+      assert.equal(retry.idempotent, true);
+      assert.equal(retry.lock.run_id, 'lease-run');
+
+      const foreign = claimInboxProcessing(dir, {
+        ...options,
+        processor: 'Grace',
+        host: 'laptop-b',
+        now: new Date('2026-09-08T10:06:00.000Z')
+      });
+      assert.equal(foreign.ok, false);
+      assert.equal(foreign.code, 'FOREIGN_OWNER');
+
+      const heartbeat = heartbeatInboxProcessing(dir, {
+        runId: 'lease-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 60 * 60 * 1000,
+        now: new Date('2026-09-08T10:30:00.000Z')
+      });
+      assert.equal(heartbeat.ok, true);
+      assert.equal(heartbeat.lock.heartbeat_at, '2026-09-08T10:30:00.000Z');
+      assert.equal(heartbeat.lock.expires_at, '2026-09-08T11:30:00.000Z');
+    });
+  });
+
+  it('rejects missing, foreign, and expired normal completion', () => {
+    withTempInstance((dir) => {
+      const missing = completeInboxProcessing(dir, {
+        runId: 'missing-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T10:00:00.000Z')
+      });
+      assert.equal(missing.ok, false);
+      assert.equal(missing.code, 'MISSING_LOCK');
+
+      claimInboxProcessing(dir, {
+        runId: 'owned-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 60 * 60 * 1000,
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+
+      const foreign = completeInboxProcessing(dir, {
+        runId: 'owned-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        completedAt: new Date('2026-09-08T10:05:00.000Z')
+      });
+      assert.equal(foreign.ok, false);
+      assert.equal(foreign.code, 'FOREIGN_OWNER');
+
+      const expired = completeInboxProcessing(dir, {
+        runId: 'owned-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T11:00:00.000Z')
+      });
+      assert.equal(expired.ok, false);
+      assert.equal(expired.code, 'STALE_LOCK');
+    });
+  });
+
+  it('fails closed when a synced lock is missing ownership or lease metadata', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const lockPath = path.join(dir, 'governance', 'inbox-processing.lock.json');
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, JSON.stringify({
+        status: 'processing',
+        run_id: 'incomplete-lock'
+      }));
+
+      const audit = auditInbox(dir);
+      assert.equal(audit.ok, false);
+      assert.equal(audit.issues.some((issue) => issue.code === 'INVALID_LOCK'), true);
+
+      const completion = completeInboxProcessing(dir, {
+        runId: 'incomplete-lock',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T10:00:00.000Z')
+      });
+      assert.equal(completion.ok, false);
+      assert.equal(completion.code, 'INVALID_LOCK');
+    });
+  });
+
+  it('checkpoints partial progress and resumes without reprocessing completed paths', () => {
+    withTempInstance((dir) => {
+      claimInboxProcessing(dir, {
+        runId: 'partial-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        claimedPaths: ['6-raw/inbox/a.md', '6-raw/inbox/b.md', '6-raw/inbox/c.md'],
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+
+      const checkpoint = checkpointInboxProcessing(dir, {
+        runId: 'partial-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        processed: ['6-raw/inbox/a.md'],
+        now: new Date('2026-09-08T10:10:00.000Z')
+      });
+      assert.equal(checkpoint.ok, true);
+      assert.deepEqual(checkpoint.lock.processed_paths, ['6-raw/inbox/a.md']);
+      assert.deepEqual(checkpoint.lock.unresolved_paths, [
+        '6-raw/inbox/b.md',
+        '6-raw/inbox/c.md'
+      ]);
+      assert.ok(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')));
+
+      const completed = completeInboxProcessing(dir, {
+        runId: 'partial-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        processed: ['6-raw/inbox/b.md'],
+        completedAt: new Date('2026-09-08T10:20:00.000Z')
+      });
+      assert.equal(completed.ok, true);
+      assert.deepEqual(completed.receipt.processed, [
+        '6-raw/inbox/a.md',
+        '6-raw/inbox/b.md'
+      ]);
+      assert.deepEqual(completed.receipt.unresolved_paths, ['6-raw/inbox/c.md']);
+      assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
+
+      const retry = completeInboxProcessing(dir, {
+        runId: 'partial-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        processed: ['6-raw/inbox/a.md', '6-raw/inbox/b.md'],
+        completedAt: new Date('2026-09-09T10:20:00.000Z')
+      });
+      assert.equal(retry.ok, true);
+      assert.equal(retry.idempotent, true);
+      assert.equal(fs.readdirSync(path.join(dir, 'governance', 'run-receipts', 'inbox-processing'))
+        .filter((file) => file.endsWith('.json')).length, 1);
+    });
+  });
+
+  it('records a stale-lock override with the replaced lease and preserves its checkpoint', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      claimInboxProcessing(dir, {
+        runId: 'stale-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 1000,
+        claimedPaths: ['6-raw/inbox/a.md', '6-raw/inbox/b.md'],
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+      checkpointInboxProcessing(dir, {
+        runId: 'stale-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 1000,
+        processed: ['6-raw/inbox/a.md'],
+        now: new Date('2026-09-08T10:00:00.500Z')
+      });
+
+      const recovered = overrideStaleInboxProcessing(dir, {
+        runId: 'resumed-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        reason: 'Confirmed the previous worker stopped and inspected sync history.',
+        now: new Date('2026-09-08T10:00:02.000Z')
+      });
+      assert.equal(recovered.ok, true);
+      assert.equal(recovered.override.actor, 'Grace');
+      assert.equal(recovered.override.overridden_at, '2026-09-08T10:00:02.000Z');
+      assert.equal(recovered.override.reason, 'Confirmed the previous worker stopped and inspected sync history.');
+      assert.equal(recovered.override.replaced_lock.run_id, 'stale-run');
+      assert.deepEqual(recovered.lock.processed_paths, ['6-raw/inbox/a.md']);
+      assert.equal(recovered.lock.resumed_from_run_id, 'stale-run');
+
+      const inspected = inspectInboxProcessing(dir);
+      assert.equal(inspected.overrides.length, 1);
+      assert.equal(inspected.overrides[0].override.replacement_run_id, 'resumed-run');
+      const audit = auditInbox(dir, { now: new Date('2026-09-08T10:00:02.000Z') });
+      assert.equal(audit.overrides.length, 1);
+      assert.equal(audit.overrides[0].override.reason, recovered.override.reason);
+    });
+  });
+
+  it('detects sync conflict names and duplicate receipt runs without choosing a copy', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.writeFileSync(path.join(inbox, 'source.md'), 'one');
+      fs.writeFileSync(path.join(inbox, 'source (conflicted copy).md'), 'two');
+      assert.deepEqual(discoverInboxConflictFiles(dir), ['6-raw/inbox/source (conflicted copy).md']);
+      const conflictAudit = auditInbox(dir);
+      assert.deepEqual(conflictAudit.syncConflictFiles, ['6-raw/inbox/source (conflicted copy).md']);
+      assert.equal(conflictAudit.issues.some((issue) => issue.code === 'SYNC_CONFLICT'), true);
+      const claim = claimInboxProcessing(dir, {
+        runId: 'conflict-run',
+        processor: 'Ada',
+        host: 'laptop-a'
+      });
+      assert.equal(claim.ok, false);
+      assert.equal(claim.code, 'SYNC_CONFLICT');
+      assert.equal(fs.readFileSync(path.join(inbox, 'source.md'), 'utf8'), 'one');
+      assert.equal(fs.readFileSync(path.join(inbox, 'source (conflicted copy).md'), 'utf8'), 'two');
+
+      fs.unlinkSync(path.join(inbox, 'source (conflicted copy).md'));
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      const first = {
+        run_id: 'duplicate-run',
+        receipt_id: 'duplicate-run',
+        completed_at: '2026-09-08T10:00:00.000Z',
+        processed: ['6-raw/inbox/source.md']
+      };
+      fs.writeFileSync(path.join(receipts, 'one.json'), JSON.stringify(first));
+      fs.writeFileSync(path.join(receipts, 'two.json'), JSON.stringify(first));
+      const duplicateAudit = auditInbox(dir);
+      assert.equal(duplicateAudit.duplicateReceipts.length, 1);
+      assert.equal(duplicateAudit.issues.some((issue) => issue.code === 'DUPLICATE_RECEIPT'), true);
     });
   });
 });

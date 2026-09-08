@@ -150,16 +150,16 @@ Promote inbox content upward only when one of these is true:
 
 ### Shared inbox coordination
 
-Use the processing lock to avoid two people or agents processing the same raw input:
+Use the leased processing run to coordinate people or agents processing the same raw input:
 
 1. Direct files in `6-raw/inbox/` are unprocessed by default.
-2. One maintainer or agent claims the processing lock before a shared synthesis run.
-3. After promotion, receipt creation, and index/summary updates, the raw inputs may stay in place, be deleted, or move to a local archive convention.
-4. The JSON receipt is the durable record of what was processed.
+2. One maintainer or agent claims a run before a shared synthesis run.
+3. The processor checkpoints each promoted path and completes only after the output and retrieval receipt exist.
+4. The JSON receipt and lock checkpoint are the durable record of what was processed and what remains.
 
 Weak signals are usually batched into signal clusters after a retrieval receipt exists. Substantive artefacts should be preserved or summarised first in `5-evidence/source-docs/` before any durable `4-context/` module is created.
 
-Never delete raw inputs from a shared inbox before the promoted output and retrieval receipt exist. If sync conflicts appear, keep both copies and resolve them during the processing pass rather than discarding either contributor's input.
+Never delete raw inputs from a shared inbox before the promoted output and retrieval receipt exist. If sync conflicts appear, keep both copies, report the ambiguity, and resolve it explicitly before processing rather than discarding either contributor's input.
 
 ### Processing lock and receipt
 
@@ -172,28 +172,27 @@ mole inbox audit
 
 The audit must scan recursively, including legacy `quick-notes/`, `messages/`, `observations/`, and `new/` folders. It excludes the instructional root `README.md` and retained `archive/` content, then reconciles live files against JSON processing receipts. Run it again before completion and do not report a no-op while unexplained files remain. If a file is intentionally skipped, report its path and reason in the run receipt.
 
-Before synthesising a shared inbox, claim the processing lock:
+Before synthesising a shared inbox, claim a run:
 
 ```bash
 mole inbox claim "Your Name"
 ```
 
-This creates `governance/inbox-processing.lock.json` with:
-- `lock_id`
-- `claimed_by`
-- `started_at`
-- `stale_after`
-- `inbox`
+This creates `governance/inbox-processing.lock.json` with a `run_id`, processor, host, start time, heartbeat, expiry, claimed paths, and checkpointed paths. Keep the returned `run_id`. Use `mole inbox heartbeat` during long runs and `mole inbox checkpoint --processed <path>` after each safely promoted item.
 
-If a lock already exists, another processor must stop and coordinate with the person named in the lock. Treat the lock as stale only after `stale_after`; when that happens, inspect cloud version history and the current inbox contents before deleting or replacing the lock.
+If a lock already exists, another processor must stop and coordinate with the owner named in the lock. A retry with the same run ID is idempotent only for the same processor and host while the lease is active. Treat an expired lease as stale only after its expiry; inspect sync history and current inbox contents before using an explicit override.
 
 After the promoted outputs, index/summary updates, and retrieval receipt exist, complete the processing run:
 
 ```bash
-mole inbox complete --processed 6-raw/inbox/customer-onboarding-note.md "Promoted weekly research notes"
+mole inbox complete --run-id <run-id> --processor "Your Name" --processed 6-raw/inbox/customer-onboarding-note.md "Promoted weekly research notes"
 ```
 
-This writes a JSON receipt under `governance/run-receipts/inbox-processing/`, updates Molehill Metrics for the processed paths, and releases the lock if one exists. The receipt records who claimed or completed the run, when it started, when it completed, what was processed, and a short summary.
+Normal completion requires an active owned claim. It fails closed for a missing, expired, foreign, duplicate, or conflicted state. A completed run can be retried with the same run ID; Mole returns the existing receipt without creating a second receipt or processing event. The receipt records the run, lease, claimed paths, processed paths, unresolved paths, lock snapshot, and summary.
+
+If a run stops after a partial pass, the checkpoint remains in the lock. Resume the same run while its lease is active. If the lease has expired, use `mole inbox override-stale --run-id <new-run-id> --reason "Confirmed the prior worker stopped"` only after checking the synced folder. If the lock is missing, use `--override-missing-lock --reason "..."` only after checking the run history. Every override records the actor, host, time, reason, replacement run, and replaced lock under `governance/run-receipts/inbox-processing/overrides/`.
+
+File coordination is not a perfect distributed lock. Sync clients may delay or duplicate writes, and conflict copies can appear for source files, locks, or receipts. `mole inbox audit` reports those copies and stale leases. Preserve every source copy and never delete or move a user file to make the state look consistent.
 
 ---
 

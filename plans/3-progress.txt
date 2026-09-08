@@ -129,3 +129,14 @@
 - Next priority: human test the critique workflow against a real Mole workspace, then continue with the audit foundations in issue #23 or #18.
 - Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. The instruction-only behavior is intentional and documented; the residual risk is that the CLI does not itself read a target file or produce a judgement.
 - Human test focus: run `mole critique idea "..."` and `mole critique spec <path>`, confirm the output names the expected Mole layers, separates evidence from judgement, and points to the critique template. Confirm an unsupported target fails without a success message.
+
+2026-09-08
+
+- Completed GitHub issue #21: made shared-folder inbox processing sync-aware and restart-safe.
+- Added schema-versioned run IDs, processor/host ownership, lease heartbeat and expiry metadata, claimed/processed/unresolved path checkpoints, idempotent claims/completions, foreign-owner checks, duplicate receipt detection, sync-conflict detection, stale-lock and missing-lock audit overrides, and fail-closed lock/receipt validation.
+- Added CLI commands for heartbeat, checkpoint, audit, and audited stale recovery; repeated completion retries return the existing receipt without a second metrics event. No source files are deleted or moved by processing coordination.
+- Updated README, CLI docs, workflow guidance, bootstrap rules, synthesis skill guidance, and run-receipt documentation for local and synced-folder limits and recovery procedure.
+- Validation: `npm test` passed with 48 tests; `node --check` passed for changed JavaScript modules; `git diff --check` passed.
+- Assumption: file-based coordination remains best-effort under sync delay; ambiguous conflict copies fail closed and require an explicit human recovery decision.
+- Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. Human focus: exercise claim/heartbeat/checkpoint/complete on a real local workspace, then repeat the same completion and inspect the receipt, metrics, stale override record, and conflict audit.
+- Next handoff: commit the completed branch, push `codex/issue-21`, create one draft PR for #21, and request `@codex review`.
