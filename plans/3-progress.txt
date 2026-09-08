@@ -137,9 +137,10 @@
 - Added CLI commands for heartbeat, checkpoint, audit, and audited stale recovery; repeated completion retries return the existing receipt without a second metrics event. No source files are deleted or moved by processing coordination.
 - Updated README, CLI docs, workflow guidance, bootstrap rules, synthesis skill guidance, and run-receipt documentation for local and synced-folder limits and recovery procedure.
 - Validation: `npm test` passed with 48 tests; `node --check` passed for changed JavaScript modules; `git diff --check` passed.
+- Follow-up review fixes: added complete-state optimistic lock checks with lock versions, narrowed conflict-copy matching, unioned inherited stale-run checkpoints, and reconciled metrics from receipts on idempotent retry.
 - Assumption: file-based coordination remains best-effort under sync delay; ambiguous conflict copies fail closed and require an explicit human recovery decision.
 - Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. Human focus: exercise claim/heartbeat/checkpoint/complete on a real local workspace, then repeat the same completion and inspect the receipt, metrics, stale override record, and conflict audit.
-- Commit status: implementation committed as `f636fb4` (`Make shared inbox processing restart-safe`).
+- Commit status: implementation commits are `f636fb4` (`Make shared inbox processing restart-safe`) and `6bad2ab` (`Harden inbox lease and retry reconciliation`).
 - Published as draft PR [#28](https://github.com/simplybenuk/product-mole/pull/28) against `main`; the exact `@codex review` comment is attached.
 - Branch status: `codex/issue-21` is pushed and synchronized with `origin/codex/issue-21`; worktree is clean.
 - Next handoff: human output testing and the requested automated review on PR #28; do not merge until those checks pass.
