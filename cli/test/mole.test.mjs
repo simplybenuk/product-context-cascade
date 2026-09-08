@@ -20,8 +20,13 @@ import {
   getInstallBanner,
   getUpgradeCommand,
   installMoleSkills,
+  normalizeReleaseVersion,
   parseInboxCompleteValues
 } from '../mole.mjs';
+import {
+  getReleaseConsistencyErrors,
+  getReleaseMetadata
+} from '../../scripts/check-release-consistency.mjs';
 import { buildUiCaptureContent, createCaptureRelPath } from '../../ui/server.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +122,7 @@ describe('help', () => {
     assert.match(output, /mole install skills\s+Install Mole agent skills into ~\/\.agents\/skills/);
     assert.match(output, /More help:\n  https:\/\/github\.com\/simplybenuk\/product-mole#readme/);
     assert.match(output, /mole check-updates/);
-    assert.match(output, /mole upgrade/);
+    assert.match(output, /mole upgrade 0\.2\.8/);
     assert.match(output, /mole doctor/);
     assert.doesNotMatch(output, /Cascade/);
     assert.doesNotMatch(output, /mole install codex/);
@@ -336,13 +341,40 @@ describe('skills installer', () => {
 });
 
 describe('upgrade command', () => {
-  it('updates the installed Mole CLI from the GitHub main branch', () => {
+  it('uses the current source version stable tag by default', () => {
     assert.deepEqual(getUpgradeCommand(), [
       'npm',
       'install',
       '-g',
-      'github:simplybenuk/product-mole#main'
+      'github:simplybenuk/product-mole#v0.2.8'
     ]);
+  });
+
+  it('accepts an explicit release version with or without the v prefix', () => {
+    assert.equal(getUpgradeCommand('0.2.7').at(-1), 'github:simplybenuk/product-mole#v0.2.7');
+    assert.equal(getUpgradeCommand('v0.2.7').at(-1), 'github:simplybenuk/product-mole#v0.2.7');
+    assert.equal(normalizeReleaseVersion('  v0.2.7  '), '0.2.7');
+  });
+
+  it('rejects moving branches and malformed upgrade refs', () => {
+    assert.throws(() => getUpgradeCommand('main'), /stable SemVer release/);
+    assert.throws(() => getUpgradeCommand('0.2'), /stable SemVer release/);
+  });
+});
+
+
+describe('release metadata', () => {
+  it('keeps the release version and MIT metadata internally consistent', () => {
+    const metadata = getReleaseMetadata(repoRoot);
+
+    assert.equal(metadata.version, '0.2.8');
+    assert.equal(metadata.packageVersion, '0.2.8');
+    assert.equal(metadata.cliPackageVersion, '0.2.8');
+    assert.equal(metadata.packageLicense, 'MIT');
+    assert.equal(metadata.cliPackageLicense, 'MIT');
+    assert.match(metadata.licenseText, /MIT License/);
+    assert.match(metadata.licenseText, /Permission is hereby granted/);
+    assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
   });
 });
 

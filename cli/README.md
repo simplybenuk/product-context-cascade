@@ -19,6 +19,15 @@ cd my-mole
 Replace `v0.2.8` with the stable release you want. Install from `#main` only
 when you explicitly want unreleased changes.
 
+To update an installed CLI from a stable release tag:
+
+```bash
+mole upgrade 0.2.8
+mole install skills
+```
+`mole upgrade` without a version uses the tag matching the installed CLI's
+version. Pass a version explicitly when moving to a different release.
+
 For local source-repo development:
 
 ```bash
@@ -33,6 +42,22 @@ mole install skills
 ```
 
 This copies skill directories to `~/.agents/skills/`, or `$AGENTS_HOME/skills/` when `AGENTS_HOME` is set. The installer prints the Mole mascot and lists the installed skills.
+
+## Development
+
+The CLI is tested with Node.js 18.x, 20.x, 22.x, and 24.x.
+
+From the repository root, run:
+
+```bash
+npm test
+npm run check:versions
+npm run check:package
+```
+
+The package declares the MIT license in its metadata and includes the root
+`LICENSE` file. A maintainer must confirm the copyright-holder line before
+publishing a release.
 
 ## Stakeholder updates
 
@@ -81,7 +106,7 @@ mole critique spec drafts/spec.md
 | `mole inbox audit` | Recursively audits the live inbox, validates the Mole root, and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
-| `mole upgrade` | Updates the globally installed Mole CLI from the latest unreleased `main` branch. |
+| `mole upgrade [version]` | Updates the globally installed Mole CLI from a stable release tag. With no version, it uses the installed CLI's version tag. |
 
 ## Inbox completion metrics
 

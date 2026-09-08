@@ -3,10 +3,19 @@
   "version": "0.2.8",
   "description": "A portable, local-first context operating system for product managers and AI assistants.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/simplybenuk/product-mole.git"
+  },
+  "bugs": {
+    "url": "https://github.com/simplybenuk/product-mole/issues"
+  },
+  "homepage": "https://github.com/simplybenuk/product-mole#readme",
   "bin": {
     "mole": "./cli/mole.mjs"
   },
   "files": [
+    "LICENSE",
     ".agents",
     "0-bootstrap",
     "1-routing",
@@ -35,7 +44,11 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node --test cli/test/mole.test.mjs"
+    "test": "node --test cli/test/mole.test.mjs",
+    "check:versions": "node scripts/check-release-consistency.mjs",
+    "check:package": "node scripts/verify-package.mjs",
+    "check:release": "node scripts/check-release-consistency.mjs --release && npm run check:package",
+    "check:release:tag": "node scripts/check-release-consistency.mjs --release --require-tag && npm run check:package"
   },
-  "license": "UNLICENSED"
+  "license": "MIT"
 }
