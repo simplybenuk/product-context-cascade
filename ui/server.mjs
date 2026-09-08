@@ -2,7 +2,8 @@ import http from 'node:http';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createCaptureFileName, resolveCapturedBy } from '../lib/capture.mjs';
+import { createCaptureFileName, resolveCapturedBy, createCaptureProvenance, addContentHash } from '../lib/capture.mjs';
+import { createSourceId, registerSourceFile } from '../lib/source-registry.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -84,22 +85,41 @@ export function buildUiCaptureContent(body, options = {}) {
   const tags = Array.isArray(body.tags) ? body.tags : [];
   const capturedBy = resolveCapturedBy(body.capturedBy || body.captured_by);
   const note = (body.note || '').trim();
+  const capturedAt = options.capturedAt || options.captured_at || `${date}T00:00:00.000Z`;
+  const provenance = createCaptureProvenance({
+    sourceId: options.sourceId || body.sourceId || body.source_id || createSourceId(),
+    sourceType: options.sourceType || body.sourceType || body.source_type || 'text_note',
+    originalDate: options.originalDate || body.originalDate || body.original_date || date,
+    capturedAt,
+    channel,
+    sourceReference: options.sourceReference || body.sourceReference || body.source_reference,
+    attachments: options.attachments || body.attachments,
+    visibility: options.visibility || body.visibility || 'internal',
+    retention: options.retention || body.retention
+  });
 
-  return [
+  return addContentHash([
     '---',
     `date: ${date}`,
     `source: ${source}`,
+    `source_id: ${provenance.sourceId}`,
+    `source_type: ${provenance.sourceType}`,
+    `original_date: ${provenance.originalDate}`,
+    `captured_at: ${provenance.capturedAt}`,
     `captured_by: ${capturedBy}`,
     `channel: ${channel}`,
     `topic_tags: [${tags.join(', ')}]`,
     `confidence: ${confidence}`,
+    `source_reference: ${JSON.stringify(provenance.sourceReference)}`,
+    `attachments: ${JSON.stringify(provenance.attachments)}`,
+    `visibility: ${provenance.visibility}`,
+    `retention: ${JSON.stringify(provenance.retention)}`,
     '---',
     '',
     note,
     '',
-  ].join('\n');
+  ].join('\n'));
 }
-
 async function routeApi(req, res, urlObj) {
   if (req.method === 'GET' && urlObj.pathname === '/api/tree') {
     const p = urlObj.searchParams.get('path') || '';
@@ -139,6 +159,9 @@ async function routeApi(req, res, urlObj) {
 
     const date = todayDate();
     const relPath = createCaptureRelPath(type, note);
+    const capturedAt = new Date().toISOString();
+    const sourceId = createSourceId();
+    const sourceReference = { kind: 'file', value: relPath };
     const { resolved } = safeRepoPath(relPath);
 
     const frontmatter = buildUiCaptureContent({
@@ -148,7 +171,17 @@ async function routeApi(req, res, urlObj) {
       tags,
       note,
       capturedBy: body.capturedBy || body.captured_by
-    }, { date });
+    }, {
+      date,
+      capturedAt,
+      sourceId,
+      sourceType: body.sourceType || body.source_type || 'text_note',
+      originalDate: body.originalDate || body.original_date || date,
+      sourceReference,
+      attachments: body.attachments,
+      visibility: body.visibility,
+      retention: body.retention
+    });
 
     await fs.mkdir(path.dirname(resolved), { recursive: true });
     try {
@@ -160,7 +193,32 @@ async function routeApi(req, res, urlObj) {
       throw err;
     }
 
-    return send(res, 200, { ok: true, path: relPath });
+    let sourceRecord;
+    let provenanceWarning;
+    try {
+      sourceRecord = registerSourceFile(REPO_ROOT, resolved, {
+        sourceId,
+        sourceType: body.sourceType || body.source_type || 'text_note',
+        originalDate: body.originalDate || body.original_date || date,
+        capturedAt,
+        channel,
+        sourceReference,
+        attachments: body.attachments,
+        visibility: body.visibility,
+        retention: body.retention,
+        hashReason: 'captured'
+      });
+    } catch (error) {
+      provenanceWarning = error.message;
+    }
+
+    return send(res, 200, {
+      ok: true,
+      path: relPath,
+      source_id: sourceRecord?.record?.source_id || sourceId,
+      content_hash: sourceRecord?.record?.content_hash || null,
+      provenance_warning: provenanceWarning || undefined
+    });
   }
 
   return false;

@@ -32,6 +32,8 @@ summary: A context-grounded critique of an idea, strategy, roadmap, spec, or dec
 
 ## Retrieval receipt
 - files read:
+- source IDs:
+- paths observed:
 - deepest layer reached:
 - why descent stopped:
 - uncertainties:

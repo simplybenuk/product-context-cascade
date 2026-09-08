@@ -33,6 +33,8 @@ summary: A prioritisation draft generated from mole context.
 
 ## Retrieval receipt
 - files read:
+- source IDs:
+- paths observed:
 - deepest layer reached:
 - why descent stopped:
 - uncertainties:

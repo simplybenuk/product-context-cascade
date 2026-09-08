@@ -129,3 +129,24 @@
 - Next priority: human test the critique workflow against a real Mole workspace, then continue with the audit foundations in issue #23 or #18.
 - Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. The instruction-only behavior is intentional and documented; the residual risk is that the CLI does not itself read a target file or produce a judgement.
 - Human test focus: run `mole critique idea "..."` and `mole critique spec <path>`, confirm the output names the expected Mole layers, separates evidence from judgement, and points to the critique template. Confirm an unsupported target fails without a success message.
+
+2026-09-08
+
+- Implemented GitHub issue #23 stable source provenance: the workspace now has a versioned source registry with immutable source IDs, SHA-256 content hashes, source metadata, attachment child records, original/current paths, path history, and hash history.
+- CLI and UI captures emit and register provenance fields. Existing local files and imported exports can be adopted with mole sources register/import without rewriting raw content.
+- Added source-ID resolution after archive moves, correction sync with the same ID, report-only legacy path migration with exact/hash/date checks, ambiguous/unresolved statuses, and duplicate/conflict findings that preserve all records.
+- Inbox receipts now retain legacy processed paths plus source_references, inbox audit recognizes source IDs, and local metrics deduplicate processed items by source ID across path changes.
+- Added schema/glossary/migration documentation, evidence/context/retrieval-receipt templates, CLI guidance, focused capture/archive/attachment/correction/migration/conflict/receipt/metrics fixtures, and scaffold support for governance/source-registry.json.
+- Assumptions: source IDs use UUID-backed src_ values; content hashes use SHA-256 after excluding the self-referential content_hash frontmatter line; migration --write adopts verified files into the registry but never rewrites raw files or reference text.
+- Validation so far: node --test cli/test/mole.test.mjs passed with 48 tests; syntax checks and git diff --check passed.
+- Next: complete independent review against issue #23 acceptance, run the full npm test command, then commit and publish the requested draft PR.
+
+2026-09-08
+
+- Independent bwh-agent-review completed against GitHub issue #23, the PRD task, source-of-truth templates, and the affected CLI/UI/receipt/metrics surfaces. No blocking or should-fix findings remain.
+- Review fixes hardened archive resolution and receipt adoption so reused paths cannot silently claim a prior source without source-ID or content-hash evidence. Explicit mole sources sync remains the deliberate correction path.
+- Final validation: npm test passed with 49 tests; all CLI, library, and UI module syntax checks passed; PRD and registry JSON parsed; git diff --check passed; CLI help exposed register/import/migrate/sync/audit.
+- Residual risk: human output testing should verify a real synced-folder/archive move, a UI capture with an existing attachment, and a migration report containing both ambiguous and unresolved references before adoption.
+- Human output focus: confirm raw bytes remain unchanged during import and migration, source IDs remain stable after moves/corrections, duplicate/conflict findings stay actionable, and evidence/context/receipts use source IDs rather than filenames.
+- Verdict: READY FOR HUMAN TESTING. Successful human testing hands the accepted change to bwh-archive-change; additional findings return to bwh-development.
+- Next: commit the completed change, push codex/issue-23, create one draft PR targeting main, and request the project review with the exact comment @codex review.

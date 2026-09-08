@@ -7,6 +7,17 @@ Read order (always):
 4. context modules only as needed
 5. evidence/raw only when required
 
+Stable provenance:
+- Treat source IDs as the identity of captures, local files, synced files,
+  attachments, and imported exports.
+- Use source_references with source_id in evidence, context, and retrieval
+  receipts. Keep workspace-relative paths only as navigation hints.
+- Preserve the same source ID across archive moves. Record path history and
+  verify content hashes after moves or corrections.
+- Never infer identity from a filename alone. Classify uncertain legacy
+  references as ambiguous or unresolved and request human review.
+- Do not silently merge duplicate or conflicting records.
+
 Rules:
 - Prefer summaries before source docs.
 - Respect depth budgets.

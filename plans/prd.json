@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-07",
+  "updated_at": "2026-09-08",
   "categories": [
     {
       "id": "instance-lifecycle",
@@ -115,6 +115,29 @@
           "title": "Metrics backfill",
           "status": "complete",
           "tasks": []
+        }
+      ]
+    },
+    {
+      "id": "source-provenance",
+      "title": "Stable Source Provenance",
+      "status": "complete",
+      "summary": "Give captures, imports, evidence, context, and retrieval receipts immutable source IDs that survive archive moves and record content corrections safely.",
+      "priority_notes": "GitHub issue #23 requires archive-safe provenance, explicit legacy migration statuses, and actionable duplicate/conflict findings without rewriting existing raw workspaces.",
+      "chunks": [
+        {
+          "id": "source-registry-and-integration",
+          "title": "Source registry and provenance integration",
+          "status": "complete",
+          "tasks": [
+            {
+              "id": "source-provenance-001",
+              "title": "Implement stable source IDs, hashes, path history, resolver, migration, conflict findings, and CLI/UI/receipt/metrics integration",
+              "status": "complete",
+              "passes": true,
+              "source": "GitHub issue #23"
+            }
+          ]
         }
       ]
     }
