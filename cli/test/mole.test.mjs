@@ -800,6 +800,34 @@ describe('inbox processing lock and receipt', () => {
       assert.match(result.stdout, /receipt written/);
       assert.match(result.stderr, /metrics update failed/);
       assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
+
+      fs.writeFileSync(
+        path.join(dir, 'governance', 'metrics', 'daily.json'),
+        JSON.stringify({ records: [] }),
+        'utf8'
+      );
+      const retry = runCli([
+        'inbox',
+        'complete',
+        '--run-id',
+        'metrics-failure-run',
+        '--processor',
+        'Ada',
+        '--processed',
+        '6-raw/inbox/a.md',
+        'Retried',
+        'completion.'
+      ], {
+        cwd: dir
+      });
+      const daily = JSON.parse(fs.readFileSync(
+        path.join(dir, 'governance', 'metrics', 'daily.json'),
+        'utf8'
+      ));
+      assert.equal(retry.status, 0);
+      assert.match(retry.stdout, /already exists/);
+      assert.doesNotMatch(retry.stderr, /metrics update failed/);
+      assert.equal(daily.records.at(-1).count, 1);
     });
   });
 
@@ -821,6 +849,7 @@ describe('inbox processing lock and receipt', () => {
 
       assert.equal(first.ok, true);
       assert.equal(first.lock.run_id, 'lease-run');
+      assert.equal(first.lock.lock_version, 1);
       assert.equal(first.lock.processor, 'Ada');
       assert.equal(first.lock.host, 'laptop-a');
       assert.equal(first.lock.started_at, '2026-09-08T10:00:00.000Z');
@@ -848,6 +877,7 @@ describe('inbox processing lock and receipt', () => {
         now: new Date('2026-09-08T10:30:00.000Z')
       });
       assert.equal(heartbeat.ok, true);
+      assert.equal(heartbeat.lock.lock_version, 2);
       assert.equal(heartbeat.lock.heartbeat_at, '2026-09-08T10:30:00.000Z');
       assert.equal(heartbeat.lock.expires_at, '2026-09-08T11:30:00.000Z');
     });
@@ -995,6 +1025,7 @@ describe('inbox processing lock and receipt', () => {
         runId: 'resumed-run',
         processor: 'Grace',
         host: 'laptop-b',
+        claimedPaths: ['6-raw/inbox/c.md'],
         reason: 'Confirmed the previous worker stopped and inspected sync history.',
         now: new Date('2026-09-08T10:00:02.000Z')
       });
@@ -1003,7 +1034,16 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(recovered.override.overridden_at, '2026-09-08T10:00:02.000Z');
       assert.equal(recovered.override.reason, 'Confirmed the previous worker stopped and inspected sync history.');
       assert.equal(recovered.override.replaced_lock.run_id, 'stale-run');
+      assert.deepEqual(recovered.lock.claimed_paths, [
+        '6-raw/inbox/a.md',
+        '6-raw/inbox/b.md',
+        '6-raw/inbox/c.md'
+      ]);
       assert.deepEqual(recovered.lock.processed_paths, ['6-raw/inbox/a.md']);
+      assert.deepEqual(recovered.lock.unresolved_paths, [
+        '6-raw/inbox/b.md',
+        '6-raw/inbox/c.md'
+      ]);
       assert.equal(recovered.lock.resumed_from_run_id, 'stale-run');
 
       const inspected = inspectInboxProcessing(dir);
@@ -1020,6 +1060,7 @@ describe('inbox processing lock and receipt', () => {
       createWorkspaceScaffold(dir);
       const inbox = path.join(dir, '6-raw', 'inbox');
       fs.writeFileSync(path.join(inbox, 'source.md'), 'one');
+      fs.writeFileSync(path.join(inbox, 'duplicate-orders.md'), 'ordinary name');
       fs.writeFileSync(path.join(inbox, 'source (conflicted copy).md'), 'two');
       assert.deepEqual(discoverInboxConflictFiles(dir), ['6-raw/inbox/source (conflicted copy).md']);
       const conflictAudit = auditInbox(dir);

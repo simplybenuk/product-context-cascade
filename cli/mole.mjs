@@ -834,11 +834,22 @@ function runInboxCommand(action, values = []) {
     if (!result.ok) process.exit(1);
     if (result.run_id) console.log('run_id          ' + result.run_id);
 
-    if (result.receipt && !result.idempotent) {
+    if (result.receipt) {
       try {
-        recordProcessedInboxItems(cwd, result.receipt.processed);
+        if (result.idempotent) {
+          backfillProcessedInboxMetrics(cwd);
+        } else {
+          const completedAt = result.receipt.completed_at
+            ? new Date(result.receipt.completed_at)
+            : null;
+          const metricsOptions = completedAt && !Number.isNaN(completedAt.getTime())
+            ? { now: completedAt }
+            : {};
+          recordProcessedInboxItems(cwd, result.receipt.processed, metricsOptions);
+        }
       } catch (err) {
-        console.warn('Warning: inbox metrics update failed: ' + err.message);
+        const action = result.idempotent ? 'reconciliation' : 'update';
+        console.warn('Warning: inbox metrics ' + action + ' failed: ' + err.message);
       }
     }
     return;
