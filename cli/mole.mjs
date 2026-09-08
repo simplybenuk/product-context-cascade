@@ -18,6 +18,13 @@ const repoRoot = path.resolve(path.dirname(thisFile), '..');
 const isDirectRun = process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(thisFile);
 const PACKAGE_SOURCE = 'github:simplybenuk/product-mole#main';
 const HELP_URL = 'https://github.com/simplybenuk/product-mole#readme';
+const CRITIQUE_TARGETS = Object.freeze([
+  'idea',
+  'strategy',
+  'roadmap',
+  'spec',
+  'decision-brief'
+]);
 
 const WORKSPACE_SCAFFOLD_DIRS = Object.freeze([
   '0-bootstrap',
@@ -55,6 +62,8 @@ Usage:
   mole signal [options] <text>         Alias for "mole insight".
   mole product-update <audience> <timescale> [--format email|teams|blog|brief]
                                       Print an agent instruction for a stakeholder update.
+  mole critique <target> [claim-or-path]
+                                      Print a context-grounded critique instruction.
   mole bootstrap-context              Print an agent instruction for first-time top-layer setup.
   mole refresh top-layers             Print an agent instruction for summary/index refresh.
   mole synthesise <target>             Print an agent instruction for synthesis work.
@@ -82,6 +91,8 @@ Examples:
   mole signal "Trial users miss the export button"
   mole insight --stakeholder CEO "Asked whether enterprise onboarding is improving"
   mole product-update CEO 2-weeks --format email
+  mole critique idea "Improve regulated-customer onboarding"
+  mole critique spec drafts/spec.md
   mole bootstrap-context
   mole refresh top-layers
   mole install skills
@@ -476,6 +487,48 @@ export function buildProductUpdateInstruction(audience, timescale, format = 'bri
 Generate a product update for ${targetAudience} covering ${updateTimescale} in ${outputFormat} format. Use the Mole operating model: retrieve top-down, descend only as needed, and keep claims evidence-backed. Start with stakeholder memory in \`4-context/stakeholders.md\`, then read relevant \`2-summaries/\`, \`3-indexes/\`, product context in \`4-context/\`, evidence in \`5-evidence/\`, and recent raw or synthesised items matching ${updateTimescale}. Tailor the update to the audience's product interests, decision authority, communication preferences, known concerns, and likely asks. Separate headline summary, progress, what changed, risks or blockers, decisions needed, asks, and suggested follow-up. Include a concise retrieval receipt.`;
 }
 
+export function buildCritiqueInstruction(target, subject = '') {
+  const normalizedTarget = String(target || '').trim().toLowerCase();
+
+  if (!CRITIQUE_TARGETS.includes(normalizedTarget)) {
+    throw new Error(
+      `Unsupported critique target. Supported critique targets: ${CRITIQUE_TARGETS.join(', ')}.`
+    );
+  }
+
+  const detail = String(subject || '').trim();
+  const targetDescription = detail
+    ? `the ${normalizedTarget}: ${detail}`
+    : `the requested ${normalizedTarget}`;
+
+  return `Suggested agent instruction:
+
+Critique ${targetDescription} against the current Mole context. If the target names a file, read it before judging it. If it is a claim or proposal, treat the supplied text as the object to test. Start with \`0-bootstrap/\`, \`1-routing/\`, relevant \`2-summaries/\`, and \`3-indexes/\`; descend into \`4-context/\` and \`5-evidence/\` only as needed. Read \`governance/input-queue.md\` when missing human input affects the judgement. Separate facts and source-backed evidence from interpretation. Do not invent support, results, or certainty.
+
+Return:
+- Critique target
+- What supports it
+- What weakens it
+- Assumptions
+- What is missing, including missing evidence or human inputs
+- Judgement and confidence
+- Best next step
+- Retrieval receipt with files read, deepest layer reached, why descent stopped, and uncertainties
+
+Use \`templates/artifacts/critique-template.md\` when creating or updating a critique file. Keep pending or rejected context out of normal evidence unless the task explicitly asks to inspect it.`;
+}
+
+function critique(values) {
+  const [target, ...subjectParts] = values;
+
+  try {
+    console.log(buildCritiqueInstruction(target, subjectParts.join(' ')));
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
+}
+
 export function buildBootstrapContextInstruction() {
   return `Suggested agent instruction:
 
@@ -714,6 +767,9 @@ if (isDirectRun) {
       break;
     case 'product-update':
       productUpdate([subcommand, ...rest].filter(Boolean));
+      break;
+    case 'critique':
+      critique([subcommand, ...rest].filter(Boolean));
       break;
     case 'bootstrap-context':
       console.log(buildBootstrapContextInstruction());

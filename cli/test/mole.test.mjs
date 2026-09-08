@@ -11,6 +11,7 @@ import { auditInbox, discoverInboxFiles } from '../../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, getMetricsPaths, recordProcessedInboxItems } from '../../lib/metrics.mjs';
 import {
   buildInsightCaptureContent,
+  buildCritiqueInstruction,
   buildProductUpdateInstruction,
   createWorkspaceScaffold,
   getCheckUpdatesOutput,
@@ -104,6 +105,7 @@ describe('help', () => {
     assert.match(output, /mole note "Support team heard onboarding confusion"/);
     assert.match(output, /mole signal "Trial users miss the export button"/);
     assert.match(output, /mole product-update CEO 2-weeks --format email/);
+    assert.match(output, /mole critique idea/);
     assert.match(output, /mole bootstrap-context/);
     assert.match(output, /mole refresh top-layers/);
     assert.match(output, /mole synthesise inbox/);
@@ -163,6 +165,44 @@ describe('synthesise guidance', () => {
     assert.match(result.stdout, /Refresh the Mole top layers/);
     assert.match(result.stdout, /blank, placeholder, stale, or incomplete summaries and indexes/);
     assert.match(result.stdout, /future retrieval/);
+  });
+});
+
+describe('critique guidance', () => {
+  it('builds a context-grounded instruction for a supported target', () => {
+    const output = buildCritiqueInstruction('idea', 'Improve regulated-customer onboarding');
+
+    assert.match(output, /Critique the idea: Improve regulated-customer onboarding/);
+    assert.match(output, /0-bootstrap\//);
+    assert.match(output, /1-routing\//);
+    assert.match(output, /2-summaries\//);
+    assert.match(output, /3-indexes\//);
+    assert.match(output, /4-context\//);
+    assert.match(output, /5-evidence\//);
+    assert.match(output, /What supports it/);
+    assert.match(output, /What weakens it/);
+    assert.match(output, /Retrieval receipt/);
+  });
+
+  it('prints critique instructions from the CLI command', () => {
+    const result = runCli(['critique', 'spec', 'drafts/spec.md']);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /Critique the spec: drafts\/spec\.md/);
+    assert.match(result.stdout, /missing evidence or human inputs/);
+  });
+
+  it('accepts every documented critique target', () => {
+    for (const target of ['idea', 'strategy', 'roadmap', 'spec', 'decision-brief']) {
+      assert.doesNotThrow(() => buildCritiqueInstruction(target));
+    }
+  });
+
+  it('rejects an unsupported critique target', () => {
+    const result = runCli(['critique', 'release']);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Supported critique targets/);
   });
 });
 

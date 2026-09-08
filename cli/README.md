@@ -11,10 +11,13 @@ Generated workspaces are clean Mole instances, not copies of the Product Mole so
 Install from GitHub:
 
 ```bash
-npm install -g github:simplybenuk/product-mole#main
+npm install -g github:simplybenuk/product-mole#v0.2.8
 mole new my-mole
 cd my-mole
 ```
+
+Replace `v0.2.8` with the stable release you want. Install from `#main` only
+when you explicitly want unreleased changes.
 
 For local source-repo development:
 
@@ -44,6 +47,8 @@ mole synthesise inbox
 mole refresh top-layers
 mole product-update CEO 2-weeks --format email
 mole product-update "Sales leadership" quarter --format teams
+mole critique idea "Improve regulated-customer onboarding"
+mole critique spec drafts/spec.md
 ```
 
 ## Commands
@@ -61,6 +66,7 @@ mole product-update "Sales leadership" quarter --format teams
 | `mole signal "<text>"` | Alias for `mole insight`. |
 | `mole insight --stakeholder CEO "<text>"` | Captures an insight with stakeholder metadata for later synthesis. |
 | `mole product-update <audience> <timescale> --format <format>` | Prints an agent instruction for a stakeholder-specific product update. |
+| `mole critique <target> [claim-or-path]` | Prints an agent instruction for a context-grounded critique. |
 | `mole bootstrap-context` | Prints an agent instruction for first-time summary/index population. |
 | `mole refresh top-layers` | Prints an agent instruction for refreshing stale, blank, or incomplete summaries and indexes. |
 | `mole create roadmap [output-path]` | Creates a roadmap draft from the roadmap template. |
@@ -75,7 +81,7 @@ mole product-update "Sales leadership" quarter --format teams
 | `mole inbox audit` | Recursively audits the live inbox, validates the Mole root, and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
-| `mole upgrade` | Updates the globally installed Mole CLI from `github:simplybenuk/product-mole#main`. |
+| `mole upgrade` | Updates the globally installed Mole CLI from the latest unreleased `main` branch. |
 
 ## Inbox completion metrics
 
