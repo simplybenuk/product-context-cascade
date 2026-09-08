@@ -139,4 +139,5 @@
 - Validation: `npm test` passed with 48 tests; `node --check` passed for changed JavaScript modules; `git diff --check` passed.
 - Assumption: file-based coordination remains best-effort under sync delay; ambiguous conflict copies fail closed and require an explicit human recovery decision.
 - Independent review: `READY FOR HUMAN TESTING`. No blocking or should-fix findings. Human focus: exercise claim/heartbeat/checkpoint/complete on a real local workspace, then repeat the same completion and inspect the receipt, metrics, stale override record, and conflict audit.
-- Next handoff: commit the completed branch, push `codex/issue-21`, create one draft PR for #21, and request `@codex review`.
+- Commit status: implementation committed as `f636fb4` (`Make shared inbox processing restart-safe`).
+- Next handoff: push `codex/issue-21`, create one draft PR for #21, and request `@codex review`.
