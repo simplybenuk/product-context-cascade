@@ -587,6 +587,27 @@ describe('stable source provenance', () => {
     });
   });
 
+  it('reuses an attachment source record across captures', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const attachment = '6-raw/inbox/shared-export.csv';
+      fs.writeFileSync(path.join(dir, attachment), 'id,value\n1,yes\n', 'utf8');
+
+      for (const note of ['First capture', 'Second capture']) {
+        const result = runCli(['insight', '--attachment', attachment, note], { cwd: dir });
+        assert.equal(result.status, 0, result.stderr);
+      }
+
+      const registry = loadSourceRegistry(dir);
+      const attachments = registry.records.filter((record) => record.source_type === 'attachment');
+      const parents = registry.records.filter((record) => record.source_type === 'text_note');
+      assert.equal(attachments.length, 1);
+      assert.equal(parents.length, 2);
+      assert.ok(parents.every((record) => record.attachments[0].source_id === attachments[0].source_id));
+    });
+  });
+
   it('hashes binary source bytes without UTF-8 normalization', () => {
     withTempInstance((dir) => {
       const inbox = path.join(dir, '6-raw', 'inbox');
@@ -692,6 +713,9 @@ describe('stable source provenance', () => {
       assert.equal(registry.records[0].current_path, firstRelative);
       assert.equal(registry.records[0].path_history.some((entry) => entry.path === secondRelative), false);
       assert.ok(findSourceConflicts(dir).some((finding) => finding.code === 'live-duplicate-source-id'));
+      const duplicateReceipt = sourceReferencesForPaths(dir, [secondRelative], { adopt: true });
+      assert.equal(duplicateReceipt.references[0].source_id, null);
+      assert.equal(duplicateReceipt.warnings[0].message, 'duplicate-live-source-id');
       const adoptionContent = ['---', 'source_id: src_adoption-ambiguous', '---', 'Adoption ambiguity'].join('\n');
       const adoptionA = '6-raw/inbox/adoption-a.md';
       const adoptionB = '6-raw/inbox/adoption-b.md';
@@ -731,7 +755,14 @@ describe('stable source provenance', () => {
       const originalHash = registered.record.content_hash;
 
       fs.renameSync(oldPath, newPath);
+      const movedBeforeReuse = syncSourceRecord(dir, registered.record.source_id);
+      assert.equal(movedBeforeReuse.status, 'resolved');
+      assert.equal(movedBeforeReuse.path, newRelative);
       fs.writeFileSync(oldPath, 'A different note reusing the old path.', 'utf8');
+
+      const stalePath = classifyLegacyPathReference(dir, { path: oldRelative });
+      assert.equal(stalePath.status, 'unresolved');
+      assert.equal(stalePath.reason, 'historical-path-reused-by-different-file');
 
       const receiptReferences = sourceReferencesForPaths(dir, [oldRelative]);
       assert.notEqual(receiptReferences.references[0].source_id, registered.record.source_id);
