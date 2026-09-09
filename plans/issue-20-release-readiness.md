@@ -32,6 +32,9 @@ explicit and verifiable.
 - Updated README, CLI README, contribution guidance, upgrade guidance, the
   template update guide, the command-surface guide, and the release checklist.
 - Updated `mole upgrade [version]` to resolve a tagged release explicitly.
+- Preserved prerelease suffixes when checking README/version alignment.
+- Made packed-artifact verification execute the installed npm `.bin/mole`
+  shim.
 - Added this traceability artifact for review and release handoff.
 
 ## Acceptance traceability
@@ -54,11 +57,11 @@ Update this section as validation is rerun. The expected strict-release blocker
 is retained until the maintainer supplies the legal holder.
 
 - Baseline root `npm test`: passed before implementation (42 tests).
-- Final root `npm test`: passed (45 tests).
-- Final `npm --prefix cli test`: passed (45 tests).
+- Final root `npm test`: passed (46 tests).
+- Final `npm --prefix cli test`: passed (46 tests).
 - `npm run check:versions`: passed with the expected holder warning.
 - `npm run check:package`: passed; 111 packed files, clean install, and CLI
-  help smoke test passed.
+  bin-shim help smoke test passed.
 - Syntax checks and `git diff --check`: passed.
 - `npm run check:release`: failed only with the expected unconfirmed-holder
   blocker.
@@ -69,8 +72,8 @@ is retained until the maintainer supplies the legal holder.
 
 Verdict: READY FOR HUMAN TESTING
 
-- No implementation, package-boundary, upgrade-safety, or documentation
-  defects were found in the reviewed scope.
+- No remaining implementation, package-boundary, upgrade-safety, or
+  documentation defects were found after the review remediations.
 - Release publication remains blocked intentionally until a maintainer
   confirms the copyright-holder line in `LICENSE`; the strict guard reports
   exactly that failure.
@@ -78,7 +81,9 @@ Verdict: READY FOR HUMAN TESTING
   install/upgrade flow against a release tag, and verify that workspace-local
   context remains untouched by the global CLI refresh.
 - The packed artifact includes the required licence, CLI, scaffold, metadata,
-  and upgrade manifest files; the clean-install smoke check passed.
+  and upgrade manifest files; the installed bin-shim smoke check passed.
+- Follow-up review findings were fixed: prerelease suffixes are preserved in
+  README version checks, and a regression test covers the corrected parser.
 
 After human output testing, hand the accepted change to `bwh-archive-change`.
 If testing finds more work, return the change to `bwh-development`.

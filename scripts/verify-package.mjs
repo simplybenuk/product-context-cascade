@@ -50,10 +50,11 @@ export function assertRequiredPackagedFiles(entries, required = REQUIRED_PACKAGE
   return packagedFiles;
 }
 
-function run(command, args, cwd) {
+function run(command, args, cwd, options = {}) {
   return spawnSync(command, args, {
     cwd,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    ...options
   });
 }
 
@@ -97,20 +98,27 @@ export function verifyPackage(root = repoRoot) {
       throw new Error('Clean install from packed artefact failed:\n' + (install.stderr || install.stdout));
     }
 
-    const installedCli = path.join(installRoot, 'node_modules', 'product-mole', 'cli', 'mole.mjs');
-    if (!fs.existsSync(installedCli)) {
-      throw new Error('Clean install did not contain the Mole CLI entry point.');
+    const installedBin = path.join(
+      installRoot,
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'mole.cmd' : 'mole'
+    );
+    if (!fs.existsSync(installedBin)) {
+      throw new Error('Clean install did not create the installed mole executable from the package bin mapping.');
     }
 
-    const help = run(process.execPath, [installedCli, '--help'], root);
+    const help = run(installedBin, ['--help'], root, {
+      shell: process.platform === 'win32'
+    });
     if (help.status !== 0 || !help.stdout.includes('Mole CLI v')) {
-      throw new Error('The CLI from the packed artefact did not run successfully:\n' + (help.stderr || help.stdout));
+      throw new Error('The installed mole executable from the packed artefact did not run successfully:\n' + (help.stderr || help.stdout));
     }
 
     return {
       archivePath,
       packagedFiles,
-      installedCli
+      installedBin
     };
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });

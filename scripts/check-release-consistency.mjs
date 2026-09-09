@@ -50,7 +50,7 @@ export function getReleaseMetadata(root = repoRoot) {
     packageLicense: packageJson.license || '',
     cliPackageLicense: cliPackageJson.license || '',
     packageFiles: Array.isArray(packageJson.files) ? packageJson.files : [],
-    readmeVersion: firstMatch(readmeText, /^Current version:\s+[^0-9]*([0-9]+\.[0-9]+\.[0-9]+)/m),
+    readmeVersion: firstMatch(readmeText, /^Current version:\s+[^0-9]*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)/m),
     latestChangelogVersion: changelogVersions[0] || null,
     readmeText,
     licenseText

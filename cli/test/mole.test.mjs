@@ -376,6 +376,40 @@ describe('release metadata', () => {
     assert.match(metadata.licenseText, /Permission is hereby granted/);
     assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
   });
+
+  it('preserves prerelease suffixes in README version checks', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0-rc.1';
+      fs.mkdirSync(path.join(dir, 'cli'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'VERSION'), version + '\n', 'utf8');
+      fs.writeFileSync(
+        path.join(dir, 'package.json'),
+        JSON.stringify({ version, license: 'MIT', files: ['LICENSE'] }),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'cli', 'package.json'),
+        JSON.stringify({ version, license: 'MIT' }),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'README.md'),
+        'Current version: ' + version + '\nInstall github:simplybenuk/product-mole#v' + version + '\n',
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'CHANGELOG.md'),
+        '# Changelog\n\n## [' + version + '] - 2026-09-09\n',
+        'utf8'
+      );
+      fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(dir, 'LICENSE'));
+
+      const metadata = getReleaseMetadata(dir);
+
+      assert.equal(metadata.readmeVersion, version);
+      assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
+    });
+  });
 });
 
 describe('upgrade ownership manifest', () => {
