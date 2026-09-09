@@ -42,6 +42,8 @@ summary: A product spec draft generated from layered mole context.
 
 ## Retrieval receipt
 - files read:
+- source IDs:
+- paths observed:
 - deepest layer reached:
 - why descent stopped:
 - uncertainties:

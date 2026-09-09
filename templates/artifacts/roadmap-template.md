@@ -34,6 +34,8 @@ summary: A concise roadmap draft generated from the current mole context.
 
 ## Retrieval receipt
 - files read:
+- source IDs:
+- paths observed:
 - deepest layer reached:
 - why descent stopped:
 - uncertainties:

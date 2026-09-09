@@ -12,6 +12,12 @@ Use this file as the default queue for "What do you need from me today?".
 - PM answers inline (or via chat), then item is marked complete.
 - Keep queue short and prioritised; archive completed items weekly.
 
+When a request is raised by a provenance review, include the relevant source
+IDs in the request or its linked note. Keep paths as navigation hints only.
+Ambiguous, unresolved, duplicate, and conflicting source findings should stay
+visible until a human resolves them; do not collapse them into one queue item
+without recording the source IDs involved.
+
 ---
 
 ## Active requests

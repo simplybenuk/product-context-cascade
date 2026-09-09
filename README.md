@@ -67,6 +67,24 @@ After installing skills, ask your agent for Mole-specific work such as:
 - Generate a product update for the CEO for the last two weeks in email format.
 - Upgrade this Mole workspace from an older version using a safe apply + manual review plan.
 
+## Stable source provenance
+
+Each CLI/UI capture and adopted import gets a stable source ID and SHA-256
+content hash in governance/source-registry.json. The registry retains original
+and current paths, path history, original date, channel, attachments, visibility,
+retention metadata, and hash history. Evidence, context, and retrieval receipts
+should use source IDs so archive moves do not break provenance.
+
+~~~bash
+mole sources register 6-raw/inbox/export.csv --source-type imported_export
+mole sources migrate
+mole sources migrate --write
+mole sources audit
+~~~
+
+Migration never treats filename-only matching as proof and never silently
+merges duplicate or conflicting records. Existing raw files remain untouched.
+
 ## Commands
 
 | Command | What it does |

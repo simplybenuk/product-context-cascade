@@ -6,6 +6,12 @@ last_updated: YYYY-MM-DD
 confidence: medium
 status: active
 tags: []
+source_references: []
+visibility: internal
+retention:
+  policy: workspace-default
+  retain_until: null
+  legal_hold: false
 summary: <what this module captures>
 ---
 
@@ -20,3 +26,9 @@ summary: <what this module captures>
 ## Decisions linked
 
 ## Open questions
+
+## Source references
+
+- source_id:
+  path:
+  role:

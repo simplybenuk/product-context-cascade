@@ -5,10 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createCaptureFileName, resolveCapturedBy } from '../lib/capture.mjs';
+import { createCaptureFileName, resolveCapturedBy, createCaptureProvenance, addContentHash } from '../lib/capture.mjs';
 import { claimInboxProcessing, completeInboxProcessing } from '../lib/inbox-processing.mjs';
 import { auditInbox } from '../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, recordProcessedInboxItems } from '../lib/metrics.mjs';
+import {
+  discoverLegacyPathReferences,
+  findSourceConflicts,
+  migrateLegacyPathReferences,
+  registerSourceFile,
+  sourceReferencesForPaths,
+  summarizeSourceFindings,
+  syncSourceRecord
+} from '../lib/source-registry.mjs';
 
 const args = process.argv.slice(2);
 const [command, subcommand, ...rest] = args;
@@ -40,6 +49,7 @@ const WORKSPACE_SCAFFOLD_FILES = Object.freeze([
   ['agents.md', 'agents.md'],
   ['governance/change-log.md', 'governance/change-log.md'],
   ['governance/input-queue.md', 'governance/input-queue.md'],
+  ['governance/source-registry.json', 'governance/source-registry.json'],
   ['governance/metrics/daily.json', 'governance/metrics/daily.json'],
   ['governance/metrics/weekly.json', 'governance/metrics/weekly.json'],
   ['governance/metrics/monthly.json', 'governance/metrics/monthly.json'],
@@ -72,6 +82,14 @@ Usage:
   mole inbox audit                    Audit the recursive live inbox and processed receipts.
   mole inbox complete [--processed path] [summary]
                                       Write a receipt, record processed paths, and release the lock.
+  mole sources register <path> [options]
+                                      Adopt a file or imported export without rewriting it.
+  mole sources import <path> [options]
+                                      Register an imported export with source provenance.
+  mole sources migrate [--write] [--include-guidance]
+                                      Classify legacy path-only references and conflicts.
+  mole sources sync <source-id>       Recheck a source after a correction or move.
+  mole sources audit                  Report duplicate and conflicting source records.
   mole metrics backfill               Rebuild metrics from inbox processing receipts.
   mole install skills                  Install Mole agent skills into ~/.agents/skills.
   mole check-updates                   Compare this CLI version with the workspace.
@@ -100,6 +118,8 @@ Examples:
   mole review input-queue
   mole inbox claim
   mole inbox complete --processed 6-raw/inbox/a.md "Promoted one note"
+  mole sources register 6-raw/inbox/export.csv --source-type imported_export
+  mole sources migrate --write
   mole metrics backfill
 
 More help:
@@ -308,7 +328,8 @@ function createArtifact(kind, outputPath) {
 function parseInsightArgs(values) {
   const metadata = {
     audience: [],
-    interestAreas: []
+    interestAreas: [],
+    attachments: []
   };
   const textParts = [];
 
@@ -328,9 +349,41 @@ function parseInsightArgs(values) {
     } else if (value === '--interest-area' && next) {
       metadata.interestAreas.push(next);
       index += 1;
+    } else if (value === '--attachment' && next) {
+      metadata.attachments.push(next);
+      index += 1;
+    } else if (value === '--source-type' && next) {
+      metadata.sourceType = next;
+      index += 1;
+    } else if (value === '--channel' && next) {
+      metadata.channel = next;
+      index += 1;
+    } else if (value === '--original-date' && next) {
+      metadata.originalDate = next;
+      index += 1;
+    } else if (value === '--source-reference' && next) {
+      metadata.sourceReference = { kind: 'external', value: next };
+      index += 1;
     } else if (value === '--visibility' && next) {
       metadata.visibility = next;
       index += 1;
+    } else if (value === '--retention-policy' && next) {
+      metadata.retention = {
+        ...(metadata.retention || {}),
+        policy: next
+      };
+      index += 1;
+    } else if (value === '--retain-until' && next) {
+      metadata.retention = {
+        ...(metadata.retention || {}),
+        retain_until: next
+      };
+      index += 1;
+    } else if (value === '--legal-hold') {
+      metadata.retention = {
+        ...(metadata.retention || {}),
+        legal_hold: true
+      };
     } else if (value === '--follow-up-by' && next) {
       metadata.followUpBy = next;
       index += 1;
@@ -354,7 +407,22 @@ function captureInsight(values) {
   const fileName = createCaptureFileName(text);
   const target = path.join(dir, fileName);
 
-  const content = buildInsightCaptureContent(text, metadata);
+  const capturedAt = nowUtc();
+  const relativePath = path.relative(cwd, target).split(path.sep).join('/');
+  const provenance = createCaptureProvenance({
+    ...metadata,
+    createdAt: capturedAt,
+    capturedAt,
+    sourceType: metadata.sourceType || 'text_note',
+    channel: metadata.channel || 'cli',
+    sourceReference: metadata.sourceReference || { kind: 'file', value: relativePath }
+  });
+  const content = buildInsightCaptureContent(text, {
+    ...metadata,
+    ...provenance,
+    createdAt: capturedAt,
+    sourceReference: provenance.sourceReference
+  });
 
   try {
     fs.writeFileSync(target, content, { encoding: 'utf8', flag: 'wx' });
@@ -365,7 +433,29 @@ function captureInsight(values) {
     }
     throw err;
   }
+  let sourceRecord;
+  try {
+    sourceRecord = registerSourceFile(cwd, target, {
+      sourceId: provenance.sourceId,
+      sourceType: provenance.sourceType,
+      originalDate: provenance.originalDate,
+      capturedAt: provenance.capturedAt,
+      channel: provenance.channel,
+      sourceReference: provenance.sourceReference,
+      attachments: provenance.attachments,
+      visibility: provenance.visibility,
+      retention: provenance.retention,
+      hashReason: 'captured'
+    });
+  } catch (error) {
+    console.warn(`Warning: source registry update failed: ${error.message}`);
+  }
+  if (sourceRecord?.ok === false) {
+    console.warn('Warning: source registry update ambiguous: ' + (sourceRecord.reason || 'human review required'));
+    process.exitCode = 1;
+  }
   console.log(`Captured insight: ${target}`);
+  console.log(`Source ID: ${sourceRecord?.record?.source_id || provenance.sourceId}`);
   console.log('\nSuggested next command:');
   console.log('mole synthesise inbox');
 }
@@ -383,11 +473,19 @@ function yamlInlineList(values = []) {
 export function buildInsightCaptureContent(text, options = {}) {
   const createdAt = options.createdAt || nowUtc();
   const capturedBy = resolveCapturedBy(options.capturedBy);
+  const provenance = createCaptureProvenance({ ...options, createdAt });
 
-  return `---
+  return addContentHash(`---
 title: Raw Insight
 capture_type: insight
 source: mole CLI
+source_id: ${provenance.sourceId}
+source_type: ${yamlScalar(provenance.sourceType)}
+original_date: ${yamlScalar(provenance.originalDate)}
+captured_at: ${provenance.capturedAt}
+channel: ${yamlScalar(provenance.channel)}
+source_reference: ${JSON.stringify(provenance.sourceReference)}
+attachments: ${JSON.stringify(provenance.attachments)}
 captured_by: ${capturedBy}
 created_at: ${createdAt}
 summary: ${text}
@@ -395,7 +493,8 @@ stakeholder: ${yamlScalar(options.stakeholder)}
 requested_by: ${yamlScalar(options.requestedBy)}
 audience: ${yamlInlineList(options.audience)}
 interest_areas: ${yamlInlineList(options.interestAreas)}
-visibility: ${yamlScalar(options.visibility || 'internal')}
+visibility: ${yamlScalar(provenance.visibility)}
+retention: ${JSON.stringify(provenance.retention)}
 follow_up_by: ${yamlScalar(options.followUpBy)}
 tags: []
 ---
@@ -409,7 +508,7 @@ ${text}
 
 ## Optional follow-up questions
 -
-`;
+`);
 }
 
 export function installMoleSkills(options = {}) {
@@ -690,7 +789,7 @@ function runInboxCommand(action, values = []) {
     if (!result.ok) process.exit(1);
 
     try {
-      recordProcessedInboxItems(cwd, result.receipt.processed);
+      recordProcessedInboxItems(cwd, result.receipt.source_references || result.receipt.processed);
     } catch (err) {
       console.warn(`Warning: inbox metrics update failed: ${err.message}`);
     }
@@ -701,6 +800,139 @@ function runInboxCommand(action, values = []) {
   process.exit(1);
 }
 
+function parseSourceCommandValues(values = []) {
+  const positional = [];
+  const options = { attachments: [] };
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    const next = values[index + 1];
+    if (value === '--write') {
+      options.write = true;
+    } else if (value === '--include-guidance') {
+      options.includeGuidance = true;
+    } else if (value === '--source-type' && next) {
+      options.sourceType = next;
+      index += 1;
+    } else if (value === '--channel' && next) {
+      options.channel = next;
+      index += 1;
+    } else if (value === '--original-date' && next) {
+      options.originalDate = next;
+      index += 1;
+    } else if (value === '--visibility' && next) {
+      options.visibility = next;
+      index += 1;
+    } else if (value === '--source-reference' && next) {
+      options.sourceReference = { kind: 'external', value: next };
+      index += 1;
+    } else if (value === '--attachment' && next) {
+      options.attachments.push(next);
+      index += 1;
+    } else if (value === '--retention-policy' && next) {
+      options.retention = {
+        ...(options.retention || {}),
+        policy: next
+      };
+      index += 1;
+    } else if (value === '--retain-until' && next) {
+      options.retention = {
+        ...(options.retention || {}),
+        retain_until: next
+      };
+      index += 1;
+    } else if (value === '--legal-hold') {
+      options.retention = {
+        ...(options.retention || {}),
+        legal_hold: true
+      };
+    } else {
+      positional.push(value);
+    }
+  }
+
+  return { positional, options };
+}
+function runSourcesCommand(action, values = []) {
+  const { positional, options } = parseSourceCommandValues(values);
+
+  if (action === 'register' || action === 'import') {
+    const sourcePath = positional[0];
+    if (!sourcePath) {
+      console.error('Missing source path. Example: mole sources register 6-raw/inbox/export.csv');
+      process.exit(1);
+    }
+    const result = registerSourceFile(cwd, sourcePath, {
+      ...options,
+      sourceType: options.sourceType || (action === 'import' ? 'imported_export' : 'local_file'),
+      channel: options.channel || (action === 'import' ? 'import' : 'file')
+    });
+    if (!result.ok) {
+      console.error('Source registration ' + (result.status || 'failed') + ': ' + (result.reason || 'human review required'));
+      for (const finding of result.conflicts || []) console.error('- ' + finding.message);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Source registered: ${result.record.source_id}`);
+    console.log(`Current path: ${result.record.current_path || 'external reference'}`);
+    console.log(`Content hash: ${result.record.content_hash}`);
+    const summary = summarizeSourceFindings(result.conflicts);
+    if (summary.total) console.log(`Findings: ${summary.duplicates} duplicate(s), ${summary.conflicts} conflict(s); human review required.`);
+    return;
+  }
+
+  if (action === 'sync') {
+    const sourceId = positional[0];
+    if (!sourceId) {
+      console.error('Missing source ID. Example: mole sources sync src_...');
+      process.exit(1);
+    }
+    try {
+      const result = syncSourceRecord(cwd, sourceId);
+      console.log(`Source sync: ${result.status}`);
+      if (result.path) console.log(`Current path: ${result.path}`);
+      if (result.content_hash) console.log(`Content hash: ${result.content_hash}`);
+      if (result.status !== 'resolved') process.exitCode = 1;
+    } catch (error) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    return;
+  }
+
+  if (action === 'migrate') {
+    const references = discoverLegacyPathReferences(cwd, options);
+    const result = migrateLegacyPathReferences(cwd, references, {
+      ...options,
+      adopt: options.write,
+      channel: 'migration'
+    });
+    const conflicts = findSourceConflicts(cwd);
+    console.log(`Legacy path references scanned: ${references.length}`);
+    console.log(`Resolved: ${result.resolved.length}`);
+    console.log(`Ambiguous: ${result.ambiguous.length}`);
+    console.log(`Unresolved: ${result.unresolved.length}`);
+    console.log(options.write ? 'Registry adoption enabled; raw files and reference text were not rewritten.' : 'Report only; rerun with --write to adopt exact or hash-verified files into the registry.');
+    for (const finding of [...result.ambiguous, ...result.unresolved]) {
+      console.log(`- ${finding.status}: ${finding.reference?.path || 'missing path'} (${finding.reason || 'human review required'})`);
+    }
+    if (conflicts.length) console.log(`Source findings: ${conflicts.length}; no records were merged.`);
+    if (result.ambiguous.length || result.unresolved.length || conflicts.length) process.exitCode = 1;
+    return;
+  }
+
+  if (action === 'audit') {
+    const conflicts = findSourceConflicts(cwd, { includeUnregisteredFiles: true });
+    const summary = summarizeSourceFindings(conflicts);
+    console.log(`Source findings: ${summary.total}`);
+    for (const finding of conflicts) console.log(`- ${finding.severity}: ${finding.message}`);
+    if (conflicts.length) process.exitCode = 1;
+    return;
+  }
+
+  console.error('Supported source commands: register, import, migrate, sync, audit');
+  process.exit(1);
+}
 function runMetricsCommand(action) {
   if (action === 'backfill') {
     const result = backfillProcessedInboxMetrics(cwd);
@@ -792,6 +1024,9 @@ if (isDirectRun) {
       break;
     case 'inbox':
       runInboxCommand(subcommand, rest);
+      break;
+    case 'sources':
+      runSourcesCommand(subcommand, rest);
       break;
     case 'metrics':
       runMetricsCommand(subcommand);

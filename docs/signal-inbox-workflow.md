@@ -6,6 +6,19 @@ Define how day-to-day PM inputs are captured quickly and transformed into durabl
 
 This workflow is designed for reality: valuable inputs arrive as both short messy snippets and larger source artefacts.
 
+Every capture or imported artefact must have a stable source ID. Preserve that
+ID when the raw file moves into a dated archive or a synced folder. Keep the
+original path, current path, path history, content hash, and hash history in
+governance/source-registry.json. A filename is a navigation hint, not proof of
+identity. See docs/source-provenance.md for the field glossary and migration
+rules.
+
+When promoting material into evidence or context, link source IDs in
+source_references and include paths only as portable navigation hints. Retrieval
+receipts should keep source_references alongside the legacy processed path list.
+If a source moved, resolve it by source ID and verify its hash. If candidates
+are ambiguous, preserve all records and request human review.
+
 ---
 
 ## Core model
@@ -89,6 +102,11 @@ source: ceo            # ceo|customer|sales|support|self|other
 channel: slack         # slack|email|call|meeting|chat|other
 topic_tags: [onboarding, ux]
 confidence: low        # low|medium|high
+source_id: src_<generated-id>
+source_type: text_note
+content_hash: sha256:<hash>
+original_date: 2026-03-15
+captured_at: 2026-03-15T09:00:00.000Z
 ---
 
 Short signal note in plain language.
@@ -193,7 +211,7 @@ After the promoted outputs, index/summary updates, and retrieval receipt exist, 
 mole inbox complete --processed 6-raw/inbox/customer-onboarding-note.md "Promoted weekly research notes"
 ```
 
-This writes a JSON receipt under `governance/run-receipts/inbox-processing/`, updates Molehill Metrics for the processed paths, and releases the lock if one exists. The receipt records who claimed or completed the run, when it started, when it completed, what was processed, and a short summary.
+This writes a JSON receipt under `governance/run-receipts/inbox-processing/`, updates Molehill Metrics for the processed paths, and releases the lock if one exists. The receipt records who claimed or completed the run, when it started, when it completed, what was processed, source_references, provenance warnings, and a short summary.
 
 ---
 

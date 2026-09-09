@@ -61,4 +61,7 @@ Explain why the update matters to this stakeholder or group based on their known
 
 ## Retrieval receipt
 
-List the Mole files read to produce this update.
+List the stable source IDs used to produce this update.
+List the workspace paths observed as navigation hints.
+Record unresolved or ambiguous source references and why they could not be
+resolved.

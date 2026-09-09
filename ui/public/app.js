@@ -31,6 +31,7 @@ form.addEventListener('submit', async (e) => {
     channel: fd.get('channel'),
     confidence: fd.get('confidence'),
     tags: String(fd.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean),
+    attachments: String(fd.get('attachments') || '').split(',').map(s => s.trim()).filter(Boolean),
     note: fd.get('note'),
   };
   try {
@@ -39,7 +40,7 @@ form.addEventListener('submit', async (e) => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    statusEl.textContent = `Saved: ${result.path}`;
+    statusEl.textContent = `Saved: ${result.path} (source ${result.source_id})`;
     form.reset();
   } catch (err) {
     statusEl.textContent = `Failed: ${err.message}`;

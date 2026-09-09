@@ -74,6 +74,22 @@ The thin CLI implementation accepts `mole critique <target> [claim-or-path]` for
 ### Insight / note / signal capture
 Used to capture chat-native or CLI-native raw context without making users think about folders.
 
+Every new capture records an immutable source ID and content hash. Existing
+local files or imported exports can be adopted into the same registry:
+
+~~~bash
+mole sources register 6-raw/inbox/export.csv --source-type imported_export
+mole sources import 6-raw/inbox/export.csv --channel import
+mole sources sync src_<id>
+mole sources migrate
+mole sources migrate --write
+mole sources audit
+~~~
+
+Migration is report-only unless --write is supplied. It does not rewrite raw
+files or reference text. Filename-only matches are ambiguous; exact-path,
+content-hash, and original-date checks are required before adoption.
+
 Examples:
 ```bash
 mole insight "Users trust CSV export more than dashboard totals"

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,22 @@ import { createCaptureFileName, resolveCapturedBy } from '../../lib/capture.mjs'
 import { claimInboxProcessing, completeInboxProcessing } from '../../lib/inbox-processing.mjs';
 import { auditInbox, discoverInboxFiles } from '../../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, getMetricsPaths, recordProcessedInboxItems } from '../../lib/metrics.mjs';
+import {
+  buildSourceReference,
+  classifyLegacyPathReference,
+  findSourceConflicts,
+  discoverLegacyPathReferences,
+  hashSourceBytes,
+  hashSourceFile,
+  loadSourceRegistry,
+  migrateLegacyPathReferences,
+  registerSource,
+  registerSourceFile,
+  resolveSourceReference,
+  SOURCE_REGISTRY_LOCK_REL_PATH,
+  sourceReferencesForPaths,
+  syncSourceRecord
+} from '../../lib/source-registry.mjs';
 import {
   buildInsightCaptureContent,
   buildCritiqueInstruction,
@@ -62,6 +78,27 @@ function runCli(args, options = {}) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+function runCliAsync(args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [moleCliPath, ...args], {
+      cwd: options.cwd,
+      env: options.env || process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (status, signal) => {
+      resolve({ status, signal, stdout, stderr });
+    });
+  });
+}
 
 describe('doctor', () => {
   it('reports source and instance versions when mole.instance.yaml exists', () => {
@@ -114,6 +151,10 @@ describe('help', () => {
     assert.match(output, /mole inbox audit/);
     assert.match(output, /mole inbox complete --processed/);
     assert.match(output, /mole metrics backfill/);
+    assert.match(output, /mole sources register/);
+    assert.match(output, /mole sources import/);
+    assert.match(output, /mole sources migrate/);
+    assert.match(output, /mole sources audit/);
     assert.match(output, /mole install skills\s+Install Mole agent skills into ~\/\.agents\/skills/);
     assert.match(output, /More help:\n  https:\/\/github\.com\/simplybenuk\/product-mole#readme/);
     assert.match(output, /mole check-updates/);
@@ -482,6 +523,463 @@ describe('capture attribution metadata', () => {
 
     assert.match(content, /captured_by: Ada/);
     assert.match(content, /source: customer/);
+  });
+});
+
+describe('stable source provenance', () => {
+  it('registers CLI capture metadata and attachment source records', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const attachmentPath = path.join(inbox, 'export.csv');
+      fs.writeFileSync(attachmentPath, 'id,value\n1,yes\n', 'utf8');
+
+      const result = runCli([
+        'insight',
+        '--channel',
+        'slack',
+        '--source-type',
+        'text_note',
+        '--original-date',
+        '2026-08-01',
+        '--source-reference',
+        'thread-123',
+        '--visibility',
+        'restricted',
+        '--retention-policy',
+        'legal',
+        '--retain-until',
+        '2027-08-01',
+        '--legal-hold',
+        '--attachment',
+        '6-raw/inbox/export.csv',
+        'A durable note'
+      ], { cwd: dir });
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Source ID: src_/);
+
+      const captureFile = fs.readdirSync(inbox).find((file) => file.endsWith('.md'));
+      const capturePath = path.join(inbox, captureFile);
+      const capture = fs.readFileSync(capturePath, 'utf8');
+      assert.match(capture, /content_hash: sha256:/);
+      assert.match(capture, /source_id: src_/);
+      assert.match(capture, /source_reference: \{"kind":"external","value":"thread-123"\}/);
+      assert.match(capture, /visibility: "restricted"/);
+
+      const registry = loadSourceRegistry(dir);
+      assert.equal(registry.records.length, 2);
+      const parent = registry.records.find((record) => record.source_type === 'text_note');
+      const attachment = registry.records.find((record) => record.source_type === 'attachment');
+      assert.ok(parent);
+      assert.ok(attachment);
+      assert.equal(parent.original_date, '2026-08-01');
+      assert.equal(parent.channel, 'slack');
+      assert.equal(parent.visibility, 'restricted');
+      assert.deepEqual(parent.retention, {
+        policy: 'legal',
+        retain_until: '2027-08-01',
+        legal_hold: true
+      });
+      assert.equal(parent.attachments[0].source_id, attachment.source_id);
+      assert.equal(attachment.content_hash, hashSourceFile(attachmentPath));
+      assert.equal(parent.content_hash, hashSourceFile(capturePath));
+    });
+  });
+
+  it('reuses an attachment source record across captures', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const attachment = '6-raw/inbox/shared-export.csv';
+      fs.writeFileSync(path.join(dir, attachment), 'id,value\n1,yes\n', 'utf8');
+
+      for (const note of ['First capture', 'Second capture']) {
+        const result = runCli(['insight', '--attachment', attachment, note], { cwd: dir });
+        assert.equal(result.status, 0, result.stderr);
+      }
+
+      const registry = loadSourceRegistry(dir);
+      const attachments = registry.records.filter((record) => record.source_type === 'attachment');
+      const parents = registry.records.filter((record) => record.source_type === 'text_note');
+      assert.equal(attachments.length, 1);
+      assert.equal(parents.length, 2);
+      assert.ok(parents.every((record) => record.attachments[0].source_id === attachments[0].source_id));
+    });
+  });
+
+  it('hashes binary source bytes without UTF-8 normalization', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const firstPath = path.join(inbox, 'first.bin');
+      const secondPath = path.join(inbox, 'second.bin');
+      const firstBytes = Buffer.from([0xff, 0x00, 0x61, 0x0a]);
+      const secondBytes = Buffer.from([0xfe, 0x00, 0x61, 0x0a]);
+      fs.writeFileSync(firstPath, firstBytes);
+      fs.writeFileSync(secondPath, secondBytes);
+
+      assert.equal(hashSourceFile(firstPath), hashSourceBytes(firstBytes));
+      assert.notEqual(hashSourceFile(firstPath), hashSourceFile(secondPath));
+      const firstRegistered = registerSourceFile(dir, firstPath);
+      const repeated = registerSourceFile(dir, firstPath);
+      assert.equal(repeated.record.source_id, firstRegistered.record.source_id);
+      registerSourceFile(dir, secondPath, { sourceId: 'src_binary-second' });
+      registerSourceFile(dir, secondPath, { sourceId: 'src_binary-second' });
+      const findings = findSourceConflicts(dir, { includeUnregisteredFiles: true });
+      assert.equal(findings.some((finding) => finding.code === 'same-content-hash' || finding.code === 'unregistered-same-content-hash'), false);
+    });
+  });
+
+  it('adopts an imported export through the source command without rewriting it', () => {
+    withTempInstance((dir) => {
+      const relative = '6-raw/inbox/import.json';
+      const absolute = path.join(dir, relative);
+      const original = '{"answer":42}\n';
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, original, 'utf8');
+
+      const result = runCli([
+        'sources',
+        'import',
+        relative,
+        '--original-date',
+        '2026-09-01',
+        '--source-reference',
+        'export-42'
+      ], { cwd: dir });
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /Source registered: src_/);
+      assert.equal(fs.readFileSync(absolute, 'utf8'), original);
+      const record = loadSourceRegistry(dir).records[0];
+      assert.equal(record.source_type, 'imported_export');
+      assert.equal(record.channel, 'import');
+      assert.equal(record.source_reference.value, 'export-42');
+      assert.equal(record.content_hash, hashSourceFile(absolute));
+    });
+  });
+
+  it('writes stable provenance fields into UI capture frontmatter', () => {
+    const content = buildUiCaptureContent({
+      source: 'customer',
+      channel: 'call',
+      confidence: 'medium',
+      tags: ['research'],
+      note: 'A customer note',
+      capturedBy: 'Ada'
+    }, {
+      date: '2026-09-01',
+      sourceId: 'src_ui-fixture',
+      capturedAt: '2026-09-01T12:00:00.000Z',
+      sourceType: 'text_note',
+      originalDate: '2026-08-31',
+      sourceReference: { kind: 'external', value: 'call-123' },
+      attachments: [{ path: '6-raw/inbox/export.csv', name: 'export.csv' }],
+      visibility: 'restricted',
+      retention: {
+        policy: 'legal',
+        retain_until: '2027-08-31',
+        legal_hold: true
+      }
+    });
+
+    assert.match(content, /content_hash: sha256:/);
+    assert.match(content, /source_id: src_ui-fixture/);
+    assert.match(content, /source_type: text_note/);
+    assert.match(content, /original_date: 2026-08-31/);
+    assert.match(content, /source_reference: \{"kind":"external","value":"call-123"\}/);
+    assert.match(content, /visibility: restricted/);
+    assert.match(content, /retention: \{"policy":"legal","retain_until":"2027-08-31","legal_hold":true\}/);
+  });
+
+  it('rejects duplicate live source IDs before moving a registry record', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const firstRelative = '6-raw/inbox/first.md';
+      const secondRelative = '6-raw/inbox/second.md';
+      const content = ['---', 'source_id: src_duplicate-live', '---', 'Same identity, different live file'].join('\n');
+      fs.writeFileSync(path.join(dir, firstRelative), content, 'utf8');
+
+      const first = registerSourceFile(dir, firstRelative);
+      fs.writeFileSync(path.join(dir, secondRelative), content, 'utf8');
+      const second = registerSourceFile(dir, secondRelative);
+      assert.equal(second.ok, false);
+      assert.equal(second.status, 'ambiguous');
+      assert.equal(second.reason, 'duplicate-live-source-id');
+      const registry = loadSourceRegistry(dir);
+      assert.equal(registry.records.length, 1);
+      assert.equal(registry.records[0].current_path, firstRelative);
+      assert.equal(registry.records[0].path_history.some((entry) => entry.path === secondRelative), false);
+      assert.ok(findSourceConflicts(dir).some((finding) => finding.code === 'live-duplicate-source-id'));
+      const duplicateReceipt = sourceReferencesForPaths(dir, [secondRelative], { adopt: true });
+      assert.equal(duplicateReceipt.references[0].source_id, null);
+      assert.equal(duplicateReceipt.warnings[0].message, 'duplicate-live-source-id');
+      const adoptionContent = ['---', 'source_id: src_adoption-ambiguous', '---', 'Adoption ambiguity'].join('\n');
+      const adoptionA = '6-raw/inbox/adoption-a.md';
+      const adoptionB = '6-raw/inbox/adoption-b.md';
+      fs.writeFileSync(path.join(dir, adoptionA), adoptionContent, 'utf8');
+      fs.writeFileSync(path.join(dir, adoptionB), adoptionContent, 'utf8');
+      const adoptedReference = sourceReferencesForPaths(dir, [adoptionA], { adopt: true });
+      assert.equal(adoptedReference.references[0].source_id, null);
+      assert.equal(adoptedReference.warnings[0].message, 'duplicate-live-source-id');
+      const resolved = resolveSourceReference(dir, { source_id: 'src_duplicate-live' });
+      assert.equal(resolved.status, 'ambiguous');
+      assert.equal(resolved.reason, 'duplicate-live-source-id');
+    });
+  });
+
+  it('resolves a source after an archive move and records a content correction', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      const archive = path.join(dir, '6-raw', 'archive', '2026-09-08');
+      fs.mkdirSync(inbox, { recursive: true });
+      fs.mkdirSync(archive, { recursive: true });
+
+      const oldRelative = '6-raw/inbox/archive-note.md';
+      const newRelative = '6-raw/archive/2026-09-08/archive-note.md';
+      const oldPath = path.join(dir, oldRelative);
+      const newPath = path.join(dir, newRelative);
+      const originalContent = [
+        '---',
+        'source_id: src_archive-fixture',
+        'original_date: 2026-09-01',
+        '---',
+        'Original note'
+      ].join('\n');
+      fs.writeFileSync(oldPath, originalContent, 'utf8');
+      const registered = registerSourceFile(dir, oldRelative, {
+        observedAt: '2026-09-01T10:00:00.000Z'
+      });
+      const originalHash = registered.record.content_hash;
+
+      fs.renameSync(oldPath, newPath);
+      const movedBeforeReuse = syncSourceRecord(dir, registered.record.source_id);
+      assert.equal(movedBeforeReuse.status, 'resolved');
+      assert.equal(movedBeforeReuse.path, newRelative);
+      fs.writeFileSync(oldPath, 'A different note reusing the old path.', 'utf8');
+
+      const stalePath = classifyLegacyPathReference(dir, { path: oldRelative });
+      assert.equal(stalePath.status, 'unresolved');
+      assert.equal(stalePath.reason, 'historical-path-reused-by-different-file');
+
+      const receiptReferences = sourceReferencesForPaths(dir, [oldRelative]);
+      assert.notEqual(receiptReferences.references[0].source_id, registered.record.source_id);
+      assert.match(receiptReferences.references[0].source_id, /^src_/);
+
+      fs.mkdirSync(path.join(dir, '4-context'), { recursive: true });
+      fs.mkdirSync(path.join(dir, '5-evidence'), { recursive: true });
+      const reference = buildSourceReference(registered.record.source_id, oldRelative, {
+        role: 'supporting-evidence'
+      });
+      const referenceText = [
+        'source_references:',
+        '  - source_id: ' + reference.source_id,
+        '    path: ' + reference.path
+      ].join('\n') + '\n';
+      fs.writeFileSync(path.join(dir, '4-context', 'module.md'), referenceText, 'utf8');
+      fs.writeFileSync(path.join(dir, '5-evidence', 'record.md'), referenceText, 'utf8');
+
+      const resolved = resolveSourceReference(dir, reference);
+      assert.equal(resolved.status, 'resolved');
+      assert.equal(resolved.path, newRelative);
+      assert.equal(resolved.source_id, registered.record.source_id);
+
+      let registry = loadSourceRegistry(dir);
+      const moved = registry.records.find((record) => record.source_id === registered.record.source_id);
+      assert.equal(moved.current_path, newRelative);
+      assert.ok(moved.path_history.some((entry) => entry.path === oldRelative));
+      assert.ok(moved.path_history.some((entry) => entry.path === newRelative));
+
+      fs.appendFileSync(newPath, '\nCorrection recorded after archive.', 'utf8');
+      const synced = syncSourceRecord(dir, registered.record.source_id, {
+        observedAt: '2026-09-08T12:00:00.000Z',
+        reason: 'source-correction'
+      });
+      assert.equal(synced.status, 'resolved');
+      assert.equal(synced.content_hash, hashSourceFile(newPath));
+
+      registry = loadSourceRegistry(dir);
+      const corrected = registry.records.find((record) => record.source_id === registered.record.source_id);
+      assert.equal(corrected.source_id, registered.record.source_id);
+      assert.equal(corrected.current_path, newRelative);
+      assert.equal(corrected.content_hash, synced.content_hash);
+      assert.ok(corrected.hash_history.some((entry) => entry.content_hash === originalHash));
+      assert.equal(corrected.hash_history.length, 2);
+      assert.equal(fs.readFileSync(oldPath, 'utf8'), 'A different note reusing the old path.');
+    });
+  });
+
+  it('classifies filename-only legacy references as ambiguous and adopts only hash-verified files', () => {
+    withTempInstance((dir) => {
+      const firstPath = path.join(dir, '6-raw', 'inbox', 'one', 'note.md');
+      const secondPath = path.join(dir, '6-raw', 'inbox', 'two', 'note.md');
+      fs.mkdirSync(path.dirname(firstPath), { recursive: true });
+      fs.mkdirSync(path.dirname(secondPath), { recursive: true });
+      fs.writeFileSync(firstPath, [
+        '---',
+        'original_date: 2026-09-01',
+        '---',
+        'First note'
+      ].join('\n'), 'utf8');
+      fs.writeFileSync(secondPath, [
+        '---',
+        'original_date: 2026-09-02',
+        '---',
+        'Second note'
+      ].join('\n'), 'utf8');
+
+      const legacyReference = { path: '6-raw/inbox/missing/note.md' };
+      const ambiguous = classifyLegacyPathReference(dir, legacyReference);
+      assert.equal(ambiguous.status, 'ambiguous');
+      assert.equal(ambiguous.reason, 'filename-only-match-is-not-proof');
+
+      const report = migrateLegacyPathReferences(dir, [legacyReference], { adopt: false });
+      assert.equal(report.resolved.length, 0);
+      assert.equal(report.ambiguous.length, 1);
+      assert.equal(loadSourceRegistry(dir).records.length, 0);
+
+      const expectedHash = hashSourceFile(firstPath);
+      const verifiedReference = {
+        ...legacyReference,
+        content_hash: expectedHash,
+        original_date: '2026-09-01'
+      };
+      const verified = classifyLegacyPathReference(dir, verifiedReference);
+      assert.equal(verified.status, 'resolved');
+      assert.equal(verified.method, 'content-hash-and-date-check');
+      assert.equal(verified.path, '6-raw/inbox/one/note.md');
+
+      const rawBefore = fs.readFileSync(firstPath, 'utf8');
+      const adopted = migrateLegacyPathReferences(dir, [verifiedReference], { adopt: true });
+      assert.equal(adopted.resolved.length, 1);
+      assert.equal(adopted.resolved[0].adopted, true);
+      assert.match(adopted.resolved[0].source_id, /^src_/);
+      assert.equal(fs.readFileSync(firstPath, 'utf8'), rawBefore);
+      assert.equal(loadSourceRegistry(dir).records.length, 1);
+    });
+  });
+
+  it('ignores scaffold guidance and directory examples during legacy discovery', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const fresh = discoverLegacyPathReferences(dir);
+      assert.deepEqual(fresh, []);
+      const guided = runCli(['sources', 'migrate', '--include-guidance'], { cwd: dir });
+      assert.match(guided.stdout, /Legacy path references scanned: [1-9]/);
+      const migrated = migrateLegacyPathReferences(dir, fresh, { adopt: true });
+      assert.equal(migrated.results.length, 0);
+      assert.equal(loadSourceRegistry(dir).records.length, 0);
+
+      const realPath = path.join(dir, '4-context', 'real.md');
+      fs.writeFileSync(realPath, 'Evidence lives at 6-raw/inbox/real-note.md\n', 'utf8');
+      assert.deepEqual(discoverLegacyPathReferences(dir), [
+        { path: '6-raw/inbox/real-note.md', referenced_in: '4-context/real.md' }
+      ]);
+    });
+  });
+
+  it('reports duplicate and path conflicts without merging records', () => {
+    withTempInstance((dir) => {
+      const firstRelative = '6-raw/inbox/first.md';
+      const secondRelative = '6-raw/inbox/second.md';
+      fs.mkdirSync(path.join(dir, '6-raw', 'inbox'), { recursive: true });
+      fs.writeFileSync(path.join(dir, firstRelative), 'same source content', 'utf8');
+      fs.writeFileSync(path.join(dir, secondRelative), 'same source content', 'utf8');
+
+      registerSourceFile(dir, firstRelative, { sourceId: 'src_first' });
+      registerSourceFile(dir, secondRelative, { sourceId: 'src_second' });
+      const duplicateFindings = findSourceConflicts(dir);
+      const duplicate = duplicateFindings.find((finding) => finding.code === 'same-content-hash');
+      assert.ok(duplicate);
+      assert.deepEqual(new Set(duplicate.source_ids), new Set(['src_first', 'src_second']));
+      assert.match(duplicate.message, /review/i);
+
+      registerSource(dir, {
+        source_id: 'src_path-conflict',
+        content_hash: 'sha256:path-conflict',
+        source_type: 'local_file',
+        original_date: '2026-09-03',
+        captured_at: '2026-09-03T10:00:00.000Z',
+        channel: 'file',
+        source_reference: { kind: 'file', value: firstRelative },
+        attachments: [],
+        visibility: 'internal',
+        retention: { policy: 'workspace-default', retain_until: null, legal_hold: false },
+        original_path: firstRelative,
+        current_path: firstRelative,
+        status: 'active'
+      });
+
+      const findings = findSourceConflicts(dir);
+      assert.ok(findings.some((finding) => finding.code === 'path-has-multiple-source-ids'));
+      assert.equal(loadSourceRegistry(dir).records.length, 3);
+    });
+  });
+
+  it('does not expire an active registry lock solely by age', () => {
+    withTempInstance((dir) => {
+      const lockFile = path.join(dir, SOURCE_REGISTRY_LOCK_REL_PATH);
+      fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: 'active-test-token' }), 'utf8');
+      const old = new Date(Date.now() - 60_000);
+      fs.utimesSync(lockFile, old, old);
+      assert.throws(() => registerSourceFile(dir, '6-raw/inbox/missing.md', { lockTimeoutMs: 50 }), /Timed out waiting/);
+      assert.equal(fs.existsSync(lockFile), true);
+      fs.unlinkSync(lockFile);
+    });
+  });
+
+  it('serializes concurrent source imports without dropping records', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mole-concurrency-'));
+    try {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const relatives = Array.from({ length: 6 }, (_, index) => '6-raw/inbox/concurrent-' + index + '.json');
+      for (const relative of relatives) fs.writeFileSync(path.join(dir, relative), JSON.stringify({ index: relative }) + '\n', 'utf8');
+      const results = await Promise.all(relatives.map((relative) => runCliAsync(['sources', 'import', relative], { cwd: dir })));
+      for (const result of results) assert.equal(result.status, 0, result.stderr);
+      const registry = loadSourceRegistry(dir);
+      assert.equal(registry.records.length, relatives.length);
+      assert.deepEqual(new Set(registry.records.map((record) => record.current_path)), new Set(relatives));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes source IDs into inbox receipts and deduplicates metrics across path changes', () => {
+    withTempInstance((dir) => {
+      const notePath = path.join(dir, '6-raw', 'inbox', 'note.md');
+      fs.mkdirSync(path.dirname(notePath), { recursive: true });
+      fs.writeFileSync(notePath, [
+        '---',
+        'source_id: src_receipt-fixture',
+        '---',
+        'Receipt note'
+      ].join('\n'), 'utf8');
+
+      const completed = completeInboxProcessing(dir, {
+        allowMissingLock: true,
+        claimedBy: 'Ada',
+        completedAt: new Date('2026-09-08T12:00:00.000Z'),
+        processed: ['6-raw/inbox/note.md'],
+        summary: 'Promoted one source note.'
+      });
+      assert.equal(completed.ok, true);
+      assert.deepEqual(completed.receipt.source_references.map((reference) => reference.source_id), [
+        'src_receipt-fixture'
+      ]);
+
+      const first = recordProcessedInboxItems(dir, [
+        { source_id: 'src_metric-fixture', path: '6-raw/inbox/note.md' }
+      ], { now: new Date('2026-09-08T13:00:00.000Z') });
+      const second = recordProcessedInboxItems(dir, [
+        { source_id: 'src_metric-fixture', path: '6-raw/archive/note.md' }
+      ], { now: new Date('2026-09-08T14:00:00.000Z') });
+      assert.equal(first.counted, 1);
+      assert.equal(second.counted, 0);
+    });
   });
 });
 
