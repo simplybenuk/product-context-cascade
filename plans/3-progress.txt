@@ -151,3 +151,5 @@
 - Addressed the next automated-review findings for issue #21: serialized local lock mutations, added full-state/version checks around every lock replacement, required explicit matching run IDs for post-claim mutations and audited recovery, rejected completed IDs during stale recovery, narrowed sync-copy detection, and made receipt filenames hash-suffixed after run-ID validation.
 - Added regressions for missing run IDs, inherited stale checkpoints, completed replacement IDs, unsafe receipt IDs, and ordinary `duplicate-orders.md` names; updated shared-folder recovery documentation.
 - Validation: `npm test` passed with 51 tests; `node --check` passed; `git diff --check` passed.
+- Third automated-review follow-up: detect overlapping canonical processed paths across distinct receipts as split-brain state, exclude those paths from audit and metrics backfill, defer missing-lock override persistence until all completion checks pass, and fail closed on malformed override JSON.
+- Validation: `npm test` passed with 54 tests; focused inbox/metrics tests passed with 28 tests; `node --check` and `git diff --check` passed.

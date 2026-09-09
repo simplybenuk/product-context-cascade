@@ -682,10 +682,19 @@ function runInboxCommand(action, values = []) {
     for (const item of result.duplicateReceipts) {
       console.log('- duplicate run ' + item.run_id + ': ' + item.paths.join(', '));
     }
+    console.log('processed path conflicts ' + result.processedPathConflicts.length);
+    for (const item of result.processedPathConflicts) {
+      console.log('- split-brain path ' + item.path + ': '
+        + item.runs.map((run) => run.run_id).join(', '));
+    }
     console.log('override records ' + result.overrides.length);
     for (const item of result.overrides) {
       console.log('- ' + item.path + ': ' + (item.override.type || 'override')
         + ' by ' + (item.override.actor || 'unknown'));
+    }
+    console.log('invalid overrides ' + result.invalidOverrides.length);
+    for (const item of result.invalidOverrides) {
+      console.log('- invalid override ' + item.path + ': ' + item.error);
     }
     if (result.staleLock) {
       console.log('stale lease     ' + (result.staleLock.run_id || result.staleLock.lock_id || 'unknown'));

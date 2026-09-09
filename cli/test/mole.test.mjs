@@ -635,6 +635,33 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
+  it('does not persist a missing-lock override when a path is already covered', () => {
+    withTempInstance((dir) => {
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      fs.writeFileSync(path.join(receipts, 'prior.json'), JSON.stringify({
+        run_id: 'prior-run',
+        completed_at: '2026-09-08T10:00:00.000Z',
+        processed: ['6-raw/inbox/a.md']
+      }));
+
+      const result = completeInboxProcessing(dir, {
+        runId: 'recovery-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        overrideMissingLock: true,
+        reason: 'The prior receipt already covers this path.',
+        completedAt: new Date('2026-09-08T10:01:00.000Z'),
+        processed: ['6-raw/inbox/a.md']
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'ALREADY_PROCESSED');
+      const overridesDir = path.join(receipts, 'overrides');
+      assert.equal(fs.existsSync(overridesDir), false);
+    });
+  });
+
   it('parses repeated processed paths while preserving completion summary text', () => {
     const parsed = parseInboxCompleteValues([
       '--processed',
@@ -1219,6 +1246,94 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(duplicateAudit.issues.some((issue) => issue.code === 'DUPLICATE_RECEIPT'), true);
     });
   });
+
+  it('detects split-brain receipts that claim the same canonical path', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.writeFileSync(path.join(inbox, 'a.md'), 'a');
+      fs.writeFileSync(path.join(inbox, 'b.md'), 'b');
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      fs.writeFileSync(path.join(receipts, 'one.json'), JSON.stringify({
+        run_id: 'offline-run-a',
+        completed_at: '2026-09-08T10:00:00.000Z',
+        processed: ['6-raw/inbox/a.md']
+      }));
+      fs.writeFileSync(path.join(receipts, 'two.json'), JSON.stringify({
+        run_id: 'offline-run-b',
+        completed_at: '2026-09-08T10:01:00.000Z',
+        processed: [path.join(dir, '6-raw', 'inbox', 'a.md'), '6-raw/inbox/b.md']
+      }));
+
+      const inspected = inspectInboxProcessing(dir);
+      assert.deepEqual(inspected.processedPathConflicts, [{
+        path: '6-raw/inbox/a.md',
+        runs: [
+          { run_id: 'offline-run-a', receipt_paths: [
+            'governance/run-receipts/inbox-processing/one.json'
+          ] },
+          { run_id: 'offline-run-b', receipt_paths: [
+            'governance/run-receipts/inbox-processing/two.json'
+          ] }
+        ]
+      }]);
+
+      const audit = auditInbox(dir);
+      assert.deepEqual(audit.processed, ['6-raw/inbox/b.md']);
+      assert.deepEqual(audit.unprocessed, ['6-raw/inbox/a.md']);
+      assert.equal(audit.issues.some((issue) => issue.code === 'PROCESSED_PATH_CONFLICT'), true);
+      assert.equal(audit.ok, false);
+
+      const claim = claimInboxProcessing(dir, {
+        runId: 'blocked-run',
+        processor: 'Ada',
+        host: 'laptop-a'
+      });
+      assert.equal(claim.ok, false);
+      assert.equal(claim.code, 'PROCESSED_PATH_CONFLICT');
+
+      const metrics = backfillProcessedInboxMetrics(dir, {
+        now: new Date('2026-09-08T12:00:00.000Z')
+      });
+      assert.equal(metrics.processed_paths_conflicted, 1);
+      assert.equal(metrics.processed_paths_counted, 1);
+      const daily = JSON.parse(fs.readFileSync(getMetricsPaths(dir).dailyPath, 'utf8'));
+      assert.deepEqual(daily.records, [{ date: '2026-09-08', count: 1 }]);
+    });
+  });
+
+  it('fails closed on malformed override JSON', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const overrides = path.join(
+        dir,
+        'governance',
+        'run-receipts',
+        'inbox-processing',
+        'overrides'
+      );
+      fs.mkdirSync(overrides, { recursive: true });
+      fs.writeFileSync(path.join(overrides, 'truncated.json'), '{"override_id":"broken"');
+
+      const inspected = inspectInboxProcessing(dir);
+      assert.equal(inspected.overrides.length, 0);
+      assert.equal(inspected.invalidOverrides.length, 1);
+      assert.match(inspected.invalidOverrides[0].error, /Unexpected end|JSON/);
+
+      const audit = auditInbox(dir);
+      assert.equal(audit.issues.some((issue) => issue.code === 'INVALID_OVERRIDE'), true);
+      assert.equal(audit.ok, false);
+
+      const claim = claimInboxProcessing(dir, {
+        runId: 'blocked-by-override',
+        processor: 'Ada',
+        host: 'laptop-a'
+      });
+      assert.equal(claim.ok, false);
+      assert.equal(claim.code, 'INVALID_OVERRIDE');
+    });
+  });
 });
 
 describe('processed inbox metrics', () => {
@@ -1416,7 +1531,7 @@ describe('processed inbox metrics', () => {
       }, null, 2)}\n`);
       fs.writeFileSync(path.join(receiptsDir, '20260611T100000000Z-b.json'), `${JSON.stringify({
         completed_at: '2026-06-11T10:00:00.000Z',
-        processed: ['6-raw/inbox/a.md']
+        processed: ['6-raw/inbox/c.md']
       }, null, 2)}\n`);
       fs.writeFileSync(path.join(receiptsDir, '20260611T110000000Z-empty.json'), `${JSON.stringify({
         completed_at: '2026-06-11T11:00:00.000Z',
@@ -1451,7 +1566,7 @@ describe('processed inbox metrics', () => {
         month_end: '2026-06-30',
         count: 3
       }]);
-      assert.deepEqual(seenToday.seen.map((entry) => entry.key), ['6-raw/inbox/a.md']);
+      assert.deepEqual(seenToday.seen.map((entry) => entry.key), ['6-raw/inbox/c.md']);
     });
   });
 

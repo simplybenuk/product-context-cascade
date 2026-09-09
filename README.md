@@ -169,6 +169,8 @@ Normal completion refuses a missing, expired, foreign, duplicate, or conflicted 
 
 Mole never deletes or moves source files to resolve a sync conflict. Conflict-named source files, lock copies, and duplicate receipt files are reported by `mole inbox audit`; keep every copy until a person decides how to handle it.
 
+The audit also fails closed when receipts from different run IDs claim the same canonical inbox path. Those split-brain paths are excluded from the normal processed count, and metrics backfill reports them without counting them. Malformed override JSON is likewise reported as invalid rather than silently omitted.
+
 ## How Mole Works
 
 Mole is a file-based context system with progressive layers.
