@@ -33,24 +33,47 @@ function firstMatch(text, pattern) {
   return text?.match(pattern)?.[1] || null;
 }
 
-function getIgnoredPackageFiles(root, packageFiles) {
-  const result = spawnSync('git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'], {
+function normalisePackagedPath(entry) {
+  return entry.replace(/^package\//, '').replace(/\/$/, '');
+}
+
+function getPackagedFilesAbsentFromHead(root) {
+  if (!fs.existsSync(path.join(root, 'package.json'))) {
+    return { files: [] };
+  }
+
+  const pack = spawnSync('npm', ['pack', '--dry-run', '--json'], {
     cwd: root,
     encoding: 'utf8'
   });
 
-  if (result.status !== 0) {
-    return { error: 'Unable to inspect ignored files before publication.' };
+  if (pack.status !== 0) {
+    return { error: 'Unable to inspect the packed artefact before publication.' };
   }
 
-  const ignoredFiles = result.stdout
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('!! '))
-    .map((line) => line.slice(3));
-  const packagePaths = packageFiles.map((entry) => entry.replace(/\/$/, ''));
+  let packMetadata;
+  try {
+    packMetadata = JSON.parse(pack.stdout);
+  } catch {
+    return { error: 'Unable to parse the packed artefact file list before publication.' };
+  }
 
+  const packagedFiles = packMetadata?.[0]?.files?.map((entry) => normalisePackagedPath(entry.path));
+  if (!Array.isArray(packagedFiles)) {
+    return { error: 'Unable to inspect the packed artefact file list before publication.' };
+  }
+
+  const head = spawnSync('git', ['ls-tree', '-r', '--name-only', 'HEAD'], {
+    cwd: root,
+    encoding: 'utf8'
+  });
+  if (head.status !== 0) {
+    return { error: 'Unable to inspect the tagged tree before publication.' };
+  }
+
+  const trackedFiles = new Set(head.stdout.split(/\r?\n/).filter(Boolean));
   return {
-    files: ignoredFiles.filter((file) => packagePaths.some((entry) => file === entry || file.startsWith(entry + '/')))
+    files: packagedFiles.filter((file) => !trackedFiles.has(file))
   };
 }
 
@@ -142,8 +165,10 @@ export function getReleaseConsistencyErrors(metadata, options = {}) {
       cwd: metadata.root,
       encoding: 'utf8'
     });
+    const hasMatchingTag = result.status === 0 &&
+      result.stdout.split(/\s+/).includes('v' + metadata.version);
 
-    if (result.status !== 0 || !result.stdout.split(/\s+/).includes('v' + metadata.version)) {
+    if (!hasMatchingTag) {
       errors.push('HEAD must have the matching Git tag v' + metadata.version + ' before publication.');
     }
 
@@ -151,21 +176,24 @@ export function getReleaseConsistencyErrors(metadata, options = {}) {
       cwd: metadata.root,
       encoding: 'utf8'
     });
+    const worktreeClean = status.status === 0 && !status.stdout.trim();
 
     if (status.status !== 0) {
       errors.push('Unable to verify that the worktree is clean before publication.');
-    } else if (status.stdout.trim()) {
+    } else if (!worktreeClean) {
       errors.push('Worktree must be clean before publication.');
     }
 
-    const ignoredPackageFiles = getIgnoredPackageFiles(metadata.root, metadata.packageFiles);
-    if (ignoredPackageFiles.error) {
-      errors.push(ignoredPackageFiles.error);
-    } else if (ignoredPackageFiles.files.length) {
-      errors.push(
-        'Ignored files under package allowlist would be included in the tagged artefact: ' +
-        ignoredPackageFiles.files.join(', ') + '.'
-      );
+    if (hasMatchingTag && worktreeClean) {
+      const packagedFiles = getPackagedFilesAbsentFromHead(metadata.root);
+      if (packagedFiles.error) {
+        errors.push(packagedFiles.error);
+      } else if (packagedFiles.files.length) {
+        errors.push(
+          'Tagged package includes files absent from HEAD: ' +
+          packagedFiles.files.join(', ') + '.'
+        );
+      }
     }
   }
 

@@ -490,18 +490,19 @@ describe('release metadata', () => {
 
       fs.mkdirSync(path.dirname(ignoredPath), { recursive: true });
       fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
-      fs.writeFileSync(path.join(dir, '.gitignore'), 'foo/secret.txt\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'mole-fixture', version, files: ['foo'] }), 'utf8');
       runGit(['init', '--quiet']);
+      fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), 'foo/secret.txt\n', 'utf8');
       runGit(['config', 'user.email', 'mole-test@example.com']);
       runGit(['config', 'user.name', 'Mole Test']);
-      runGit(['add', 'tracked.txt', '.gitignore']);
+      runGit(['add', 'tracked.txt', 'package.json']);
       runGit(['commit', '--quiet', '-m', 'baseline']);
       runGit(['tag', 'v' + version]);
       fs.writeFileSync(ignoredPath, 'not-in-tag\n', 'utf8');
 
       assert.ok(
         getReleaseConsistencyErrors(metadata, { requireTag: true })
-          .some((error) => error.includes('Ignored files under package allowlist'))
+          .some((error) => error.includes('Tagged package includes files absent from HEAD'))
       );
     });
   });
