@@ -157,3 +157,5 @@
 - Validation: `npm test` passed with 56 tests; focused inbox/metrics tests passed with 30 tests; `node --check` and `git diff --check` passed.
 - Fifth automated-review follow-up: treat duplicate receipt copies for one run as processed-path conflicts and persist stale override records only after replacement succeeds.
 - Validation: `npm test` passed with 57 tests; focused inbox/metrics tests passed with 31 tests; `node --check` and `git diff --check` passed.
+- Sixth automated-review follow-up: exclude the full path union of divergent duplicate-run receipts and use prepared/finalized stale override records so replacement failures or worker exits remain auditable and recoverable.
+- Validation: `npm test` passed with 59 tests; focused inbox/metrics tests passed with 33 tests; `node --check` and `git diff --check` passed.

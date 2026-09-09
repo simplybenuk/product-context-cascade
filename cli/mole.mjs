@@ -696,6 +696,10 @@ function runInboxCommand(action, values = []) {
     for (const item of result.invalidOverrides) {
       console.log('- invalid override ' + item.path + ': ' + item.error);
     }
+    console.log('incomplete overrides ' + result.incompleteOverrides.length);
+    for (const item of result.incompleteOverrides) {
+      console.log('- prepared override ' + item.path + ': reconcile before continuing');
+    }
     if (result.staleLock) {
       console.log('stale lease     ' + (result.staleLock.run_id || result.staleLock.lock_id || 'unknown'));
     }

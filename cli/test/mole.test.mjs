@@ -1389,6 +1389,41 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
+  it('excludes the full union of divergent duplicate-run receipt paths', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.writeFileSync(path.join(inbox, 'a.md'), 'a');
+      fs.writeFileSync(path.join(inbox, 'b.md'), 'b');
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      fs.writeFileSync(path.join(receipts, 'one.json'), JSON.stringify({
+        run_id: 'divergent-run',
+        completed_at: '2026-09-08T10:00:00.000Z',
+        processed: ['6-raw/inbox/a.md']
+      }));
+      fs.writeFileSync(path.join(receipts, 'two.json'), JSON.stringify({
+        run_id: 'divergent-run',
+        completed_at: '2026-09-08T10:01:00.000Z',
+        processed: ['6-raw/inbox/b.md']
+      }));
+
+      const audit = auditInbox(dir);
+      assert.deepEqual(audit.processed, []);
+      assert.deepEqual(audit.unprocessed, ['6-raw/inbox/a.md', '6-raw/inbox/b.md']);
+      assert.deepEqual(audit.processedPathConflicts.map((item) => item.path), [
+        '6-raw/inbox/a.md',
+        '6-raw/inbox/b.md'
+      ]);
+
+      const metrics = backfillProcessedInboxMetrics(dir, {
+        now: new Date('2026-09-08T12:00:00.000Z')
+      });
+      assert.equal(metrics.processed_paths_conflicted, 2);
+      assert.equal(metrics.processed_paths_counted, 0);
+    });
+  });
+
   it('fails closed on malformed override JSON', () => {
     withTempInstance((dir) => {
       createWorkspaceScaffold(dir);
@@ -1418,6 +1453,48 @@ describe('inbox processing lock and receipt', () => {
       });
       assert.equal(claim.ok, false);
       assert.equal(claim.code, 'INVALID_OVERRIDE');
+    });
+  });
+
+  it('reports prepared overrides as recoverable incomplete audit state', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const overrides = path.join(
+        dir,
+        'governance',
+        'run-receipts',
+        'inbox-processing',
+        'overrides'
+      );
+      fs.mkdirSync(overrides, { recursive: true });
+      fs.writeFileSync(path.join(overrides, 'prepared.json'), JSON.stringify({
+        schema_version: 2,
+        override_id: 'prepared-override',
+        type: 'stale-lock',
+        action: 'replace-stale-lock',
+        actor: 'Grace',
+        processor: 'Grace',
+        host: 'laptop-b',
+        overridden_at: '2026-09-08T10:00:00.000Z',
+        state: 'prepared',
+        finalized_at: null,
+        reason: 'Replacement was prepared before the worker stopped.',
+        replaced_lock: { lock_id: 'stale-run' },
+        replacement_run_id: 'replacement-run'
+      }));
+
+      const inspected = inspectInboxProcessing(dir);
+      assert.equal(inspected.incompleteOverrides.length, 1);
+      const audit = auditInbox(dir);
+      assert.equal(audit.issues.some((issue) => issue.code === 'INCOMPLETE_OVERRIDE'), true);
+      assert.equal(audit.ok, false);
+      const claim = claimInboxProcessing(dir, {
+        runId: 'blocked-by-prepared-override',
+        processor: 'Ada',
+        host: 'laptop-a'
+      });
+      assert.equal(claim.ok, false);
+      assert.equal(claim.code, 'INCOMPLETE_OVERRIDE');
     });
   });
 
