@@ -1046,6 +1046,21 @@ describe('inbox processing lock and receipt', () => {
       ]);
       assert.equal(recovered.lock.resumed_from_run_id, 'stale-run');
 
+      const resumedCompletion = completeInboxProcessing(dir, {
+        runId: 'resumed-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        processed: ['6-raw/inbox/b.md', '6-raw/inbox/c.md'],
+        completedAt: new Date('2026-09-08T10:00:03.000Z')
+      });
+      assert.equal(resumedCompletion.ok, true);
+      assert.deepEqual(resumedCompletion.receipt.processed, [
+        '6-raw/inbox/a.md',
+        '6-raw/inbox/b.md',
+        '6-raw/inbox/c.md'
+      ]);
+      assert.deepEqual(resumedCompletion.receipt.unresolved_paths, []);
+
       const inspected = inspectInboxProcessing(dir);
       assert.equal(inspected.overrides.length, 1);
       assert.equal(inspected.overrides[0].override.replacement_run_id, 'resumed-run');
