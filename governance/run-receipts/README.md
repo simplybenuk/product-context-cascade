@@ -8,3 +8,5 @@ Inbox processing receipts live under `inbox-processing/` as JSON. Each current r
 Stale-lock and missing-lock decisions live under `inbox-processing/overrides/`. An override records the actor, host, time, reason, replacement run, and replaced lock. Keep these records available for audit. They are not permission to discard source files or silently resolve sync conflicts.
 
 Receipts from different run IDs must not claim the same canonical inbox path. `mole inbox audit` reports that split-brain state and excludes the path from the normal processed set; metrics backfill skips it until the receipts are reconciled. Malformed override JSON is an invalid governance record and causes processing to fail closed.
+
+Receipts that contain processed paths also require a valid `completed_at` timestamp. Expired legacy locks are migrated only through an explicit audited stale-lock override; normal completion does not silently upgrade them.

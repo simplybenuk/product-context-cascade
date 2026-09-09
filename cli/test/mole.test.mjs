@@ -1143,6 +1143,49 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
+  it('migrates an expired legacy lock only through an audited stale override', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const lockPath = path.join(dir, 'governance', 'inbox-processing.lock.json');
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, JSON.stringify({
+        lock_id: 'legacy-run',
+        status: 'processing',
+        claimed_by: 'Ada',
+        started_at: '2026-09-08T10:00:00.000Z',
+        stale_after: '2026-09-08T10:00:01.000Z',
+        inbox: '6-raw/inbox'
+      }));
+
+      const normal = completeInboxProcessing(dir, {
+        runId: 'legacy-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T10:00:02.000Z')
+      });
+      assert.equal(normal.ok, false);
+      assert.equal(normal.code, 'INVALID_LOCK');
+
+      const recovered = overrideStaleInboxProcessing(dir, {
+        runId: 'migrated-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        claimedPaths: ['6-raw/inbox/a.md'],
+        reason: 'Inspected the expired legacy lock before migrating it.',
+        now: new Date('2026-09-08T10:00:02.000Z')
+      });
+
+      assert.equal(recovered.ok, true);
+      assert.equal(recovered.override.type, 'legacy-stale-lock');
+      assert.equal(recovered.override.action, 'migrate-legacy-stale-lock');
+      assert.equal(recovered.override.replaced_lock.lock_id, 'legacy-run');
+      assert.equal(recovered.lock.schema_version, 2);
+      assert.equal(recovered.lock.run_id, 'migrated-run');
+      assert.equal(recovered.lock.host, 'laptop-b');
+      assert.deepEqual(recovered.lock.claimed_paths, ['6-raw/inbox/a.md']);
+    });
+  });
+
   it('rejects stale recovery into a run that already has a completion receipt', () => {
     withTempInstance((dir) => {
       claimInboxProcessing(dir, {
@@ -1332,6 +1375,31 @@ describe('inbox processing lock and receipt', () => {
       });
       assert.equal(claim.ok, false);
       assert.equal(claim.code, 'INVALID_OVERRIDE');
+    });
+  });
+
+  it('does not use receipt paths when completion metadata is missing', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.writeFileSync(path.join(inbox, 'missing-time.md'), 'not complete');
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      fs.writeFileSync(path.join(receipts, 'missing-completed-at.json'), JSON.stringify({
+        run_id: 'missing-time-run',
+        processed: ['6-raw/inbox/missing-time.md']
+      }));
+
+      const inspected = inspectInboxProcessing(dir);
+      assert.equal(inspected.receipts.length, 0);
+      assert.equal(inspected.invalidReceipts.length, 1);
+      assert.match(inspected.invalidReceipts[0].error, /completed_at/);
+
+      const audit = auditInbox(dir);
+      assert.deepEqual(audit.processed, []);
+      assert.deepEqual(audit.unprocessed, ['6-raw/inbox/missing-time.md']);
+      assert.equal(audit.issues.some((issue) => issue.code === 'INVALID_RECEIPT'), true);
+      assert.equal(audit.ok, false);
     });
   });
 });

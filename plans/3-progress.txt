@@ -153,3 +153,5 @@
 - Validation: `npm test` passed with 51 tests; `node --check` passed; `git diff --check` passed.
 - Third automated-review follow-up: detect overlapping canonical processed paths across distinct receipts as split-brain state, exclude those paths from audit and metrics backfill, defer missing-lock override persistence until all completion checks pass, and fail closed on malformed override JSON.
 - Validation: `npm test` passed with 54 tests; focused inbox/metrics tests passed with 28 tests; `node --check` and `git diff --check` passed.
+- Fourth automated-review follow-up: added explicit audited migration for structurally recognized expired legacy locks and rejected receipt paths without valid completion metadata.
+- Validation: `npm test` passed with 56 tests; focused inbox/metrics tests passed with 30 tests; `node --check` and `git diff --check` passed.

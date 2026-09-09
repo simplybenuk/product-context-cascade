@@ -194,6 +194,8 @@ If a run stops after a partial pass, the checkpoint remains in the lock. Resume 
 
 File coordination is not a perfect distributed lock. Each mutating operation serializes local lock updates and verifies the complete lock state plus its monotonic version before and after writing, but sync clients may still delay or duplicate writes. Conflict copies can appear for source files, locks, or receipts; `mole inbox audit` reports those copies and stale leases. Preserve every source copy and never delete or move a user file to make the state look consistent.
 
+Expired locks from older Mole versions require the explicit stale override path to be migrated into the current lease schema. Receipts with processed paths must include a valid completion timestamp before they can explain live inbox files.
+
 ---
 
 ## Anti-noise rules

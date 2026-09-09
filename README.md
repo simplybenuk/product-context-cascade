@@ -171,6 +171,8 @@ Mole never deletes or moves source files to resolve a sync conflict. Conflict-na
 
 The audit also fails closed when receipts from different run IDs claim the same canonical inbox path. Those split-brain paths are excluded from the normal processed count, and metrics backfill reports them without counting them. Malformed override JSON is likewise reported as invalid rather than silently omitted.
 
+Expired locks from older Mole versions cannot be completed normally. An explicit stale override can migrate a structurally recognizable legacy lock into the current lease format while preserving the original lock in the audit record; incomplete receipts with processed paths are never used as processing evidence.
+
 ## How Mole Works
 
 Mole is a file-based context system with progressive layers.
