@@ -632,6 +632,8 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(fs.existsSync(path.join(dir, 'governance', 'inbox-processing.lock.json')), false);
       const overrides = fs.readdirSync(path.join(dir, 'governance', 'run-receipts', 'inbox-processing', 'overrides'));
       assert.equal(overrides.length, 1);
+      const inspected = inspectInboxProcessing(dir);
+      assert.equal(inspected.overrides[0].override.state, 'finalized');
     });
   });
 
@@ -1062,6 +1064,38 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(retry.idempotent, true);
       assert.equal(fs.readdirSync(path.join(dir, 'governance', 'run-receipts', 'inbox-processing'))
         .filter((file) => file.endsWith('.json')).length, 1);
+    });
+  });
+
+  it('rejects checkpoints for already-receipted paths after an empty claim', () => {
+    withTempInstance((dir) => {
+      completeInboxProcessing(dir, {
+        runId: 'prior-completed-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        overrideMissingLock: true,
+        reason: 'Recorded the prior completed path.',
+        completedAt: new Date('2026-09-08T10:00:00.000Z'),
+        processed: ['6-raw/inbox/a.md']
+      });
+      const claim = claimInboxProcessing(dir, {
+        runId: 'empty-claim-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        now: new Date('2026-09-08T10:01:00.000Z')
+      });
+      const checkpoint = checkpointInboxProcessing(dir, {
+        runId: 'empty-claim-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        processed: ['6-raw/inbox/a.md'],
+        now: new Date('2026-09-08T10:02:00.000Z')
+      });
+
+      assert.equal(claim.ok, true);
+      assert.equal(checkpoint.ok, false);
+      assert.equal(checkpoint.code, 'ALREADY_PROCESSED');
+      assert.deepEqual(inspectInboxProcessing(dir).lock.processed_paths, []);
     });
   });
 
@@ -1520,6 +1554,26 @@ describe('inbox processing lock and receipt', () => {
       assert.deepEqual(audit.unprocessed, ['6-raw/inbox/missing-time.md']);
       assert.equal(audit.issues.some((issue) => issue.code === 'INVALID_RECEIPT'), true);
       assert.equal(audit.ok, false);
+    });
+  });
+
+  it('skips sync-conflict receipts during metrics backfill', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const receipts = path.join(dir, 'governance', 'run-receipts', 'inbox-processing');
+      fs.mkdirSync(receipts, { recursive: true });
+      fs.writeFileSync(path.join(receipts, 'run (conflicted copy).json'), JSON.stringify({
+        run_id: 'sync-conflict-receipt',
+        completed_at: '2026-09-08T10:00:00.000Z',
+        processed: ['6-raw/inbox/a.md']
+      }));
+
+      const result = backfillProcessedInboxMetrics(dir, {
+        now: new Date('2026-09-08T12:00:00.000Z')
+      });
+      assert.equal(result.conflict_receipts_skipped, 1);
+      assert.equal(result.processed_paths_counted, 0);
+      assert.deepEqual(JSON.parse(fs.readFileSync(getMetricsPaths(dir).dailyPath, 'utf8')).records, []);
     });
   });
 });
