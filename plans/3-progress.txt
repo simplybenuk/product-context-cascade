@@ -161,3 +161,8 @@
 - Validation: `npm test` passed with 59 tests; focused inbox/metrics tests passed with 33 tests; `node --check` and `git diff --check` passed.
 - Seventh automated-review follow-up: reject already-receipted checkpoint paths after empty claims, keep missing-lock overrides prepared until receipt durability then finalize them, and exclude conflict-named receipts from metrics backfill.
 - Validation: `npm test` passed with 61 tests; focused inbox/metrics tests passed with 35 tests; `node --check` and `git diff --check` passed.
+- Integrated review follow-up: audit and metrics now share validated, non-conflict receipt records; accepted receipts require a usable current or legacy identity and completion timestamp. Conflicting override copies and duplicate override IDs block all mutations.
+- Fixed interrupted missing-lock finalization retries to use the matching override record and absolute path. Unrelated prepared overrides, mismatched snapshots, and foreign owners cannot use the retry exception. Documented automatic retry limits and manual reconciliation cases in the run-receipt guide.
+- Added seven regression tests covering invalid and ambiguous receipts, override conflicts, injected receipt/finalization failures, overlapping checkpoint mutations, synced lock renewal during stale recovery, and ordinary duplicate subject names. Positive historical fixtures now carry their required legacy identities.
+- Validation: `npm test` passed with 68 tests; `node --check` and `git diff --check` passed.
+- Review limitation: the independent read-only reviewer hit its usage limit and did not complete. This pass was integrated and checked by the implementation agent; a fresh automated review is still required before merge.
