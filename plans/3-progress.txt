@@ -155,3 +155,5 @@
 - Validation: `npm test` passed with 54 tests; focused inbox/metrics tests passed with 28 tests; `node --check` and `git diff --check` passed.
 - Fourth automated-review follow-up: added explicit audited migration for structurally recognized expired legacy locks and rejected receipt paths without valid completion metadata.
 - Validation: `npm test` passed with 56 tests; focused inbox/metrics tests passed with 30 tests; `node --check` and `git diff --check` passed.
+- Fifth automated-review follow-up: treat duplicate receipt copies for one run as processed-path conflicts and persist stale override records only after replacement succeeds.
+- Validation: `npm test` passed with 57 tests; focused inbox/metrics tests passed with 31 tests; `node --check` and `git diff --check` passed.

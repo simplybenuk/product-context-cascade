@@ -1186,6 +1186,37 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
+  it('does not leave a stale override record when replacement validation fails', () => {
+    withTempInstance((dir) => {
+      claimInboxProcessing(dir, {
+        runId: 'stale-validation-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 1000,
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+
+      assert.throws(() => overrideStaleInboxProcessing(dir, {
+        runId: 'replacement-validation-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        leaseMs: 0,
+        reason: 'The replacement lease is invalid.',
+        now: new Date('2026-09-08T10:00:02.000Z')
+      }), /Lease duration must be a positive number/);
+
+      const overridesDir = path.join(
+        dir,
+        'governance',
+        'run-receipts',
+        'inbox-processing',
+        'overrides'
+      );
+      assert.equal(fs.existsSync(overridesDir), false);
+      assert.equal(inspectInboxProcessing(dir).lock.run_id, 'stale-validation-run');
+    });
+  });
+
   it('rejects stale recovery into a run that already has a completion receipt', () => {
     withTempInstance((dir) => {
       claimInboxProcessing(dir, {
@@ -1287,6 +1318,18 @@ describe('inbox processing lock and receipt', () => {
       const duplicateAudit = auditInbox(dir);
       assert.equal(duplicateAudit.duplicateReceipts.length, 1);
       assert.equal(duplicateAudit.issues.some((issue) => issue.code === 'DUPLICATE_RECEIPT'), true);
+      assert.deepEqual(duplicateAudit.processedPathConflicts, [{
+        path: '6-raw/inbox/source.md',
+        runs: [{
+          run_id: 'duplicate-run',
+          receipt_paths: [
+            'governance/run-receipts/inbox-processing/one.json',
+            'governance/run-receipts/inbox-processing/two.json'
+          ]
+        }]
+      }]);
+      assert.equal(duplicateAudit.issues.some((issue) => issue.code === 'PROCESSED_PATH_CONFLICT'), true);
+      assert.deepEqual(duplicateAudit.processed, []);
     });
   });
 
