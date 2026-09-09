@@ -13,6 +13,8 @@ Every accepted receipt requires a nonempty string identity (`run_id`, legacy `lo
 
 Malformed override JSON, conflict-named override copies, and duplicate `override_id` values block processing. Preserve all copies and reconcile the audit history before retrying. Expired legacy locks are migrated only through an explicit audited stale-lock override; normal completion does not silently upgrade them.
 
+Stale recovery checks every inherited claim, inherited checkpoint, and requested claim against existing completion receipts. If any canonical path is already covered, it returns `ALREADY_PROCESSED` without replacing the lock or writing an override. Reconcile the stale lock and receipt history before retrying; requesting a different claim does not discard inherited checkpoints.
+
 ## Interrupted recovery
 
 Overrides start in `prepared` state and become `finalized` only after the lock replacement or completion receipt is written. Audit reports `INCOMPLETE_OVERRIDE` while any prepared record remains.

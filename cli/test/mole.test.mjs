@@ -1579,6 +1579,73 @@ describe('inbox processing lock and receipt', () => {
 });
 
 describe('inbox review regressions', () => {
+  for (const scenario of [
+    { name: 'checkpoint inherited from an empty claim', processed: ['6-raw/inbox/a.md'] },
+    { name: 'checkpoint inherited alongside a new requested claim',
+      claimed: ['6-raw/inbox/a.md'], processed: ['6-raw/inbox/a.md'], requested: ['6-raw/inbox/b.md'] },
+    { name: 'unprocessed inherited claim', claimed: ['./6-raw/inbox/a.md'] },
+    { name: 'new requested claim', requested: ['6-raw/inbox/sub/../a.md'] },
+    { name: 'new requested claim during legacy migration', legacy: true, requested: ['6-raw/inbox/a.md'] }
+  ]) {
+    it('rejects receipt overlap in a stale replacement: ' + scenario.name, () => {
+      withTempInstance((dir) => {
+        createWorkspaceScaffold(dir);
+        const owner = { runId: 'stale-run', processor: 'Ada', host: 'laptop-a', leaseMs: 1000 };
+        const lockPath = path.join(dir, 'governance/inbox-processing.lock.json');
+        if (scenario.legacy) {
+          fs.writeFileSync(lockPath, JSON.stringify({
+            lock_id: owner.runId, claimed_by: owner.processor, status: 'processing',
+            started_at: '2026-09-08T10:00:00Z', stale_after: '2026-09-08T10:00:01Z'
+          }));
+        } else {
+          assert.equal(claimInboxProcessing(dir, {
+            ...owner, claimedPaths: scenario.claimed || [], now: new Date('2026-09-08T10:00:00Z')
+          }).ok, true);
+          if (scenario.processed) {
+            assert.equal(checkpointInboxProcessing(dir, {
+              ...owner, processed: scenario.processed, now: new Date('2026-09-08T10:00:00.500Z')
+            }).ok, true);
+          }
+        }
+        // Another host's completion arrives after the local claim/checkpoint.
+        const receiptsDir = path.join(dir, 'governance/run-receipts/inbox-processing');
+        fs.mkdirSync(receiptsDir, { recursive: true });
+        const receiptPath = path.join(receiptsDir, 'synced-run.json');
+        fs.writeFileSync(receiptPath, JSON.stringify({
+          run_id: 'synced-run', completed_at: '2026-09-08T10:00:01Z',
+          processed: [path.join(dir, '6-raw/inbox/a.md')]
+        }));
+        const sourcePath = path.join(dir, '6-raw/inbox/a.md');
+        fs.writeFileSync(sourcePath, 'Retain the raw source.');
+        const lockBytes = fs.readFileSync(lockPath, 'utf8');
+        const receiptBytes = fs.readFileSync(receiptPath, 'utf8');
+
+        const result = overrideStaleInboxProcessing(dir, {
+          runId: 'replacement-run', processor: 'Grace', host: 'laptop-b',
+          claimedPaths: scenario.requested || [], reason: 'Checked stopped worker and sync history.',
+          now: new Date('2026-09-08T10:00:02Z')
+        });
+
+        assert.equal(result.ok, false);
+        assert.equal(result.code, 'ALREADY_PROCESSED');
+        assert.deepEqual(result.alreadyProcessedPaths, ['6-raw/inbox/a.md']);
+        for (const command of [['override-stale'], ['claim', '--override-stale']]) {
+          const cli = runCli(['inbox', ...command, '--run-id', 'replacement-run',
+            '--processor', 'Grace', '--host', 'laptop-b', '--reason', 'Checked sync history.',
+            ...(scenario.requested || []).flatMap((item) => ['--claimed-path', item])], { cwd: dir });
+          assert.equal(cli.status, 1);
+          assert.match(cli.stderr, /already covered by completion receipts: 6-raw\/inbox\/a\.md/);
+          assert.match(cli.stderr, /No replacement or override was written/);
+        }
+        assert.equal(fs.readFileSync(lockPath, 'utf8'), lockBytes);
+        assert.equal(fs.readFileSync(receiptPath, 'utf8'), receiptBytes);
+        assert.equal(fs.readFileSync(sourcePath, 'utf8'), 'Retain the raw source.');
+        assert.equal(fs.existsSync(path.join(receiptsDir, 'overrides')), false);
+        assert.equal(inspectInboxProcessing(dir).receipts.length, 1);
+      });
+    });
+  }
+
   it('serializes overlapping checkpoint updates and preserves both after retry', (t) => {
     withTempInstance((dir) => {
       const options = { runId: 'serialized', processor: 'Ada', host: 'laptop-a' };
