@@ -125,6 +125,17 @@ export function getReleaseConsistencyErrors(metadata, options = {}) {
     if (result.status !== 0 || !result.stdout.split(/\s+/).includes('v' + metadata.version)) {
       errors.push('HEAD must have the matching Git tag v' + metadata.version + ' before publication.');
     }
+
+    const status = spawnSync('git', ['status', '--porcelain=v1', '--untracked-files=all'], {
+      cwd: metadata.root,
+      encoding: 'utf8'
+    });
+
+    if (status.status !== 0) {
+      errors.push('Unable to verify that the worktree is clean before publication.');
+    } else if (status.stdout.trim()) {
+      errors.push('Worktree must be clean before publication.');
+    }
   }
 
   return errors;

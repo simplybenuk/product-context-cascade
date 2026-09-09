@@ -35,6 +35,8 @@ explicit and verifiable.
 - Preserved prerelease suffixes when checking README/version alignment.
 - Made packed-artifact verification execute the installed npm `.bin/mole`
   shim.
+- The tagged release gate rejects tracked and untracked worktree changes before
+  package verification.
 - Added this traceability artifact for review and release handoff.
 
 ## Acceptance traceability
@@ -57,8 +59,8 @@ Update this section as validation is rerun. The expected strict-release blocker
 is retained until the maintainer supplies the legal holder.
 
 - Baseline root `npm test`: passed before implementation (42 tests).
-- Final root `npm test`: passed (46 tests).
-- Final `npm --prefix cli test`: passed (46 tests).
+- Final root `npm test`: passed (47 tests).
+- Final `npm --prefix cli test`: passed (47 tests).
 - `npm run check:versions`: passed with the expected holder warning.
 - `npm run check:package`: passed; 111 packed files, clean install, and CLI
   bin-shim help smoke test passed.
@@ -83,7 +85,8 @@ Verdict: READY FOR HUMAN TESTING
 - The packed artifact includes the required licence, CLI, scaffold, metadata,
   and upgrade manifest files; the installed bin-shim smoke check passed.
 - Follow-up review findings were fixed: prerelease suffixes are preserved in
-  README version checks, and a regression test covers the corrected parser.
+  README version checks, the installed bin shim is exercised, and a regression
+  test rejects dirty worktrees during tagged release validation.
 
 After human output testing, hand the accepted change to `bwh-archive-change`.
 If testing finds more work, return the change to `bwh-development`.

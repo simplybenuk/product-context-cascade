@@ -410,6 +410,57 @@ describe('release metadata', () => {
       assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
     });
   });
+
+  it('rejects dirty worktrees even when the release tag points at HEAD', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0';
+      const metadata = {
+        root: dir,
+        version,
+        packageVersion: version,
+        cliPackageVersion: version,
+        packageLicense: 'MIT',
+        cliPackageLicense: 'MIT',
+        packageFiles: ['LICENSE'],
+        readmeVersion: version,
+        latestChangelogVersion: version,
+        readmeText: 'Install github:simplybenuk/product-mole#v' + version,
+        licenseText: 'MIT License\nPermission is hereby granted\nTHE SOFTWARE IS PROVIDED'
+      };
+      const trackedPath = path.join(dir, 'tracked.txt');
+      const untrackedPath = path.join(dir, 'untracked.txt');
+      const runGit = (args) => {
+        const result = spawnSync('git', args, {
+          cwd: dir,
+          encoding: 'utf8'
+        });
+        assert.equal(result.status, 0, result.stderr);
+      };
+
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      runGit(['init', '--quiet']);
+      runGit(['config', 'user.email', 'mole-test@example.com']);
+      runGit(['config', 'user.name', 'Mole Test']);
+      runGit(['add', 'tracked.txt']);
+      runGit(['commit', '--quiet', '-m', 'baseline']);
+      runGit(['tag', 'v' + version]);
+
+      assert.deepEqual(getReleaseConsistencyErrors(metadata, { requireTag: true }), []);
+
+      fs.writeFileSync(trackedPath, 'changed\n', 'utf8');
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .includes('Worktree must be clean before publication.')
+      );
+
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      fs.writeFileSync(untrackedPath, 'untracked\n', 'utf8');
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .includes('Worktree must be clean before publication.')
+      );
+    });
+  });
 });
 
 describe('upgrade ownership manifest', () => {
