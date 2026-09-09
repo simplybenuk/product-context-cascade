@@ -58,11 +58,35 @@ function run(command, args, cwd, options = {}) {
   });
 }
 
-export function verifyPackage(root = repoRoot) {
+export function createGitSnapshot(root, ref, destination) {
+  fs.mkdirSync(destination, { recursive: true });
+  const archivePath = path.join(destination, '.git-snapshot.tar');
+
+  try {
+    const archive = run('git', ['archive', '--format=tar', '--output', archivePath, ref], root);
+    if (archive.status !== 0) {
+      throw new Error('Unable to export ' + ref + ':\n' + (archive.stderr || archive.stdout));
+    }
+
+    const extract = run('tar', ['-xf', archivePath, '-C', destination], root);
+    if (extract.status !== 0) {
+      throw new Error('Unable to extract ' + ref + ':\n' + (extract.stderr || extract.stdout));
+    }
+  } finally {
+    fs.rmSync(archivePath, { force: true });
+  }
+
+  return destination;
+}
+
+export function verifyPackage(root = repoRoot, options = {}) {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'product-mole-package-'));
 
   try {
-    const pack = run('npm', ['pack', '--json', '--pack-destination', tempRoot], root);
+    const packageRoot = options.gitRef
+      ? createGitSnapshot(root, options.gitRef, path.join(tempRoot, 'source'))
+      : root;
+    const pack = run('npm', ['pack', '--json', '--pack-destination', tempRoot], packageRoot);
     if (pack.status !== 0) {
       throw new Error('npm pack failed:\n' + (pack.stderr || pack.stdout));
     }
@@ -78,7 +102,7 @@ export function verifyPackage(root = repoRoot) {
       throw new Error('npm pack reported a missing archive: ' + archivePath);
     }
 
-    const listing = run('tar', ['-tzf', archivePath], root);
+    const listing = run('tar', ['-tzf', archivePath], packageRoot);
     if (listing.status !== 0) {
       throw new Error('Unable to inspect packed artefact:\n' + (listing.stderr || listing.stdout));
     }
@@ -91,7 +115,7 @@ export function verifyPackage(root = repoRoot) {
     const install = run(
       'npm',
       ['install', '--prefix', installRoot, '--no-save', '--ignore-scripts', archivePath],
-      root
+      packageRoot
     );
 
     if (install.status !== 0) {
@@ -108,7 +132,7 @@ export function verifyPackage(root = repoRoot) {
       throw new Error('Clean install did not create the installed mole executable from the package bin mapping.');
     }
 
-    const help = run(installedBin, ['--help'], root, {
+    const help = run(installedBin, ['--help'], packageRoot, {
       shell: process.platform === 'win32'
     });
     if (help.status !== 0 || !help.stdout.includes('Mole CLI v')) {
@@ -126,7 +150,8 @@ export function verifyPackage(root = repoRoot) {
 }
 
 function main() {
-  const result = verifyPackage(repoRoot);
+  const fromHead = process.argv.includes('--from-head');
+  const result = verifyPackage(repoRoot, fromHead ? { gitRef: 'HEAD' } : {});
   console.log('Packed artefact verified: ' + result.packagedFiles.size + ' files; clean install and CLI smoke check passed.');
 }
 

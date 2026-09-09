@@ -48,7 +48,7 @@
     "check:versions": "node scripts/check-release-consistency.mjs",
     "check:package": "node scripts/verify-package.mjs",
     "check:release": "node scripts/check-release-consistency.mjs --release && npm run check:package",
-    "check:release:tag": "node scripts/check-release-consistency.mjs --release --require-tag && npm run check:package"
+    "check:release:tag": "node scripts/check-release-consistency.mjs --release --require-tag && node scripts/verify-package.mjs --from-head"
   },
   "license": "MIT"
 }

@@ -27,6 +27,7 @@ import {
   getReleaseConsistencyErrors,
   getReleaseMetadata
 } from '../../scripts/check-release-consistency.mjs';
+import { createGitSnapshot } from '../../scripts/verify-package.mjs';
 import { buildUiCaptureContent, createCaptureRelPath } from '../../ui/server.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -504,6 +505,17 @@ describe('release metadata', () => {
         getReleaseConsistencyErrors(metadata, { requireTag: true })
           .some((error) => error.includes('Tagged package includes files absent from HEAD'))
       );
+
+      const releaseScript = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')
+      ).scripts['check:release:tag'];
+      assert.match(releaseScript, /verify-package\.mjs --from-head$/);
+
+      withTempInstance((snapshotDir) => {
+        createGitSnapshot(dir, 'HEAD', snapshotDir);
+        assert.ok(fs.existsSync(path.join(snapshotDir, 'package.json')));
+        assert.ok(!fs.existsSync(path.join(snapshotDir, 'foo', 'secret.txt')));
+      });
     });
   });
 });
