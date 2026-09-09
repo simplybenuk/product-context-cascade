@@ -33,6 +33,27 @@ function firstMatch(text, pattern) {
   return text?.match(pattern)?.[1] || null;
 }
 
+function getIgnoredPackageFiles(root, packageFiles) {
+  const result = spawnSync('git', ['status', '--porcelain=v1', '--ignored', '--untracked-files=all'], {
+    cwd: root,
+    encoding: 'utf8'
+  });
+
+  if (result.status !== 0) {
+    return { error: 'Unable to inspect ignored files before publication.' };
+  }
+
+  const ignoredFiles = result.stdout
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('!! '))
+    .map((line) => line.slice(3));
+  const packagePaths = packageFiles.map((entry) => entry.replace(/\/$/, ''));
+
+  return {
+    files: ignoredFiles.filter((file) => packagePaths.some((entry) => file === entry || file.startsWith(entry + '/')))
+  };
+}
+
 export function getReleaseMetadata(root = repoRoot) {
   const packageJson = readJson(root, 'package.json') || {};
   const cliPackageJson = readJson(root, 'cli/package.json') || {};
@@ -135,6 +156,16 @@ export function getReleaseConsistencyErrors(metadata, options = {}) {
       errors.push('Unable to verify that the worktree is clean before publication.');
     } else if (status.stdout.trim()) {
       errors.push('Worktree must be clean before publication.');
+    }
+
+    const ignoredPackageFiles = getIgnoredPackageFiles(metadata.root, metadata.packageFiles);
+    if (ignoredPackageFiles.error) {
+      errors.push(ignoredPackageFiles.error);
+    } else if (ignoredPackageFiles.files.length) {
+      errors.push(
+        'Ignored files under package allowlist would be included in the tagged artefact: ' +
+        ignoredPackageFiles.files.join(', ') + '.'
+      );
     }
   }
 

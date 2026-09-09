@@ -461,6 +461,50 @@ describe('release metadata', () => {
       );
     });
   });
+
+  it('rejects ignored package files even when the release tag points at HEAD', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0';
+      const metadata = {
+        root: dir,
+        version,
+        packageVersion: version,
+        cliPackageVersion: version,
+        packageLicense: 'MIT',
+        cliPackageLicense: 'MIT',
+        packageFiles: ['foo'],
+        readmeVersion: version,
+        latestChangelogVersion: version,
+        readmeText: 'Install github:simplybenuk/product-mole#v' + version,
+        licenseText: 'MIT License\nPermission is hereby granted\nTHE SOFTWARE IS PROVIDED'
+      };
+      const trackedPath = path.join(dir, 'tracked.txt');
+      const ignoredPath = path.join(dir, 'foo', 'secret.txt');
+      const runGit = (args) => {
+        const result = spawnSync('git', args, {
+          cwd: dir,
+          encoding: 'utf8'
+        });
+        assert.equal(result.status, 0, result.stderr);
+      };
+
+      fs.mkdirSync(path.dirname(ignoredPath), { recursive: true });
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      fs.writeFileSync(path.join(dir, '.gitignore'), 'foo/secret.txt\n', 'utf8');
+      runGit(['init', '--quiet']);
+      runGit(['config', 'user.email', 'mole-test@example.com']);
+      runGit(['config', 'user.name', 'Mole Test']);
+      runGit(['add', 'tracked.txt', '.gitignore']);
+      runGit(['commit', '--quiet', '-m', 'baseline']);
+      runGit(['tag', 'v' + version]);
+      fs.writeFileSync(ignoredPath, 'not-in-tag\n', 'utf8');
+
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .some((error) => error.includes('Ignored files under package allowlist'))
+      );
+    });
+  });
 });
 
 describe('upgrade ownership manifest', () => {
