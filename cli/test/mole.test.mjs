@@ -21,6 +21,7 @@ import {
   registerSource,
   registerSourceFile,
   resolveSourceReference,
+  SOURCE_REGISTRY_LOCK_REL_PATH,
   sourceReferencesForPaths,
   syncSourceRecord
 } from '../../lib/source-registry.mjs';
@@ -599,7 +600,10 @@ describe('stable source provenance', () => {
 
       assert.equal(hashSourceFile(firstPath), hashSourceBytes(firstBytes));
       assert.notEqual(hashSourceFile(firstPath), hashSourceFile(secondPath));
-      registerSourceFile(dir, firstPath, { sourceId: 'src_binary-first' });
+      const firstRegistered = registerSourceFile(dir, firstPath);
+      const repeated = registerSourceFile(dir, firstPath);
+      assert.equal(repeated.record.source_id, firstRegistered.record.source_id);
+      registerSourceFile(dir, secondPath, { sourceId: 'src_binary-second' });
       registerSourceFile(dir, secondPath, { sourceId: 'src_binary-second' });
       const findings = findSourceConflicts(dir, { includeUnregisteredFiles: true });
       assert.equal(findings.some((finding) => finding.code === 'same-content-hash' || finding.code === 'unregistered-same-content-hash'), false);
@@ -688,6 +692,14 @@ describe('stable source provenance', () => {
       assert.equal(registry.records[0].current_path, firstRelative);
       assert.equal(registry.records[0].path_history.some((entry) => entry.path === secondRelative), false);
       assert.ok(findSourceConflicts(dir).some((finding) => finding.code === 'live-duplicate-source-id'));
+      const adoptionContent = ['---', 'source_id: src_adoption-ambiguous', '---', 'Adoption ambiguity'].join('\n');
+      const adoptionA = '6-raw/inbox/adoption-a.md';
+      const adoptionB = '6-raw/inbox/adoption-b.md';
+      fs.writeFileSync(path.join(dir, adoptionA), adoptionContent, 'utf8');
+      fs.writeFileSync(path.join(dir, adoptionB), adoptionContent, 'utf8');
+      const adoptedReference = sourceReferencesForPaths(dir, [adoptionA], { adopt: true });
+      assert.equal(adoptedReference.references[0].source_id, null);
+      assert.equal(adoptedReference.warnings[0].message, 'duplicate-live-source-id');
       const resolved = resolveSourceReference(dir, { source_id: 'src_duplicate-live' });
       assert.equal(resolved.status, 'ambiguous');
       assert.equal(resolved.reason, 'duplicate-live-source-id');
@@ -823,6 +835,8 @@ describe('stable source provenance', () => {
       createWorkspaceScaffold(dir);
       const fresh = discoverLegacyPathReferences(dir);
       assert.deepEqual(fresh, []);
+      const guided = runCli(['sources', 'migrate', '--include-guidance'], { cwd: dir });
+      assert.match(guided.stdout, /Legacy path references scanned: [1-9]/);
       const migrated = migrateLegacyPathReferences(dir, fresh, { adopt: true });
       assert.equal(migrated.results.length, 0);
       assert.equal(loadSourceRegistry(dir).records.length, 0);
@@ -870,6 +884,19 @@ describe('stable source provenance', () => {
       const findings = findSourceConflicts(dir);
       assert.ok(findings.some((finding) => finding.code === 'path-has-multiple-source-ids'));
       assert.equal(loadSourceRegistry(dir).records.length, 3);
+    });
+  });
+
+  it('does not expire an active registry lock solely by age', () => {
+    withTempInstance((dir) => {
+      const lockFile = path.join(dir, SOURCE_REGISTRY_LOCK_REL_PATH);
+      fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+      fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: 'active-test-token' }), 'utf8');
+      const old = new Date(Date.now() - 60_000);
+      fs.utimesSync(lockFile, old, old);
+      assert.throws(() => registerSourceFile(dir, '6-raw/inbox/missing.md', { lockTimeoutMs: 50 }), /Timed out waiting/);
+      assert.equal(fs.existsSync(lockFile), true);
+      fs.unlinkSync(lockFile);
     });
   });
 

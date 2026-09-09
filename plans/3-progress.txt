@@ -159,3 +159,11 @@
 - Validation: node --check passed for changed JavaScript modules; npm test passed with 53 tests; fresh scaffold discovery probe returned []; git diff --check passed.
 - Human output focus: verify import/migration preserves raw bytes, duplicate-ID warnings remain actionable, concurrent captures retain every registry record, and scaffold guidance is absent from migration reports.
 - Next: commit and push codex/issue-23, then request the exact @codex review comment again; do not merge.
+
+2026-09-09
+
+- Addressed the second automated review pass: unchanged no-ID re-registration now reuses a unique path-and-hash record; ambiguous adoption preserves a null receipt source ID with a warning; active lock owners are protected by PID liveness and ownership tokens; and CLI migration passes --include-guidance through to discovery.
+- Added focused assertions for each behavior while retaining the raw-byte, duplicate-ID, serialized-write, and scaffold-safe regressions.
+- Validation: npm test passed with 54 tests; changed JavaScript syntax checks passed; git diff --check passed.
+- Independent review: READY FOR HUMAN TESTING. Residual human focus remains raw-byte preservation, actionable ambiguity warnings, concurrent registry integrity, and migration guidance filtering.
+- Next: commit and push the second remediation checkpoint, then request the exact @codex review comment again; do not merge.

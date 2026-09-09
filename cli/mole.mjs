@@ -901,7 +901,7 @@ function runSourcesCommand(action, values = []) {
   }
 
   if (action === 'migrate') {
-    const references = discoverLegacyPathReferences(cwd);
+    const references = discoverLegacyPathReferences(cwd, options);
     const result = migrateLegacyPathReferences(cwd, references, {
       ...options,
       adopt: options.write,
