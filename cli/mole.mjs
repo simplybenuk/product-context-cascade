@@ -16,7 +16,8 @@ const cwd = process.cwd();
 const thisFile = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(thisFile), '..');
 const isDirectRun = process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(thisFile);
-const PACKAGE_SOURCE = 'github:simplybenuk/product-mole#main';
+const PACKAGE_REPOSITORY = 'github:simplybenuk/product-mole';
+const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const HELP_URL = 'https://github.com/simplybenuk/product-mole#readme';
 const CRITIQUE_TARGETS = Object.freeze([
   'idea',
@@ -75,7 +76,7 @@ Usage:
   mole metrics backfill               Rebuild metrics from inbox processing receipts.
   mole install skills                  Install Mole agent skills into ~/.agents/skills.
   mole check-updates                   Compare this CLI version with the workspace.
-  mole upgrade                         Update the globally installed Mole CLI.
+  mole upgrade [version]               Update the globally installed Mole CLI from a stable tag.
   mole doctor                          Check workspace metadata and required folders.
 
 Artifacts:
@@ -93,6 +94,7 @@ Examples:
   mole product-update CEO 2-weeks --format email
   mole critique idea "Improve regulated-customer onboarding"
   mole critique spec drafts/spec.md
+  mole upgrade 0.2.8
   mole bootstrap-context
   mole refresh top-layers
   mole install skills
@@ -630,13 +632,28 @@ function checkUpdates() {
   process.stdout.write(getCheckUpdatesOutput());
 }
 
-export function getUpgradeCommand() {
-  return ['npm', 'install', '-g', PACKAGE_SOURCE];
+export function normalizeReleaseVersion(version = getSourceVersion()) {
+  const normalized = String(version).trim().replace(/^v/i, '');
+  if (!RELEASE_VERSION_PATTERN.test(normalized)) {
+    throw new Error('Upgrade version must be a stable SemVer release such as 0.2.8.');
+  }
+  return normalized;
 }
 
-function upgradeTool() {
-  const command = getUpgradeCommand();
-  console.log(`Updating Mole from ${PACKAGE_SOURCE}...`);
+export function getUpgradeCommand(version = getSourceVersion()) {
+  const releaseVersion = normalizeReleaseVersion(version);
+  return ['npm', 'install', '-g', `${PACKAGE_REPOSITORY}#v${releaseVersion}`];
+}
+
+function upgradeTool(version) {
+  let command;
+  try {
+    command = getUpgradeCommand(version);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+  console.log(`Updating Mole from ${command[command.length - 1]}...`);
 
   const result = spawnSync(command[0], command.slice(1), {
     stdio: 'inherit'
@@ -811,7 +828,14 @@ if (isDirectRun) {
       checkUpdates();
       break;
     case 'upgrade':
-      upgradeTool();
+      {
+        const upgradeArgs = [subcommand, ...rest].filter(Boolean);
+        if (upgradeArgs.length > 1) {
+          console.error('Usage: mole upgrade [version]');
+          process.exit(1);
+        }
+        upgradeTool(upgradeArgs[0]);
+      }
       break;
     case 'doctor':
       doctor();

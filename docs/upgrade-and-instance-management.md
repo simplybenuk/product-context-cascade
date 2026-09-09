@@ -91,9 +91,23 @@ It exists so the instance has an upgrade memory.
 Upstream should publish releases with:
 - a semantic version (`VERSION`)
 - a changelog entry (`CHANGELOG.md`)
+- a matching Git tag (`vX.Y.Z`)
+- a package that passes the repository test, release-consistency, and packed-artifact checks
 - upgrade notes when instance migration matters
 
-Not every release needs tooling. But every upgrade-affecting release should clearly say:
+Install a stable CLI from its tag when bootstrapping or repairing an older
+installation:
+
+```bash
+npm install -g github:simplybenuk/product-mole#v0.2.8
+```
+
+Once the current CLI is installed, `mole upgrade [version]` performs the same
+refresh from a stable tag. Pass `0.2.8` or `v0.2.8` to choose a release. With no
+argument, the CLI reuses the tag matching its installed version. It does not
+follow the moving `main` branch, so an upgrade target is reproducible.
+
+Every upgrade-affecting release should clearly say:
 - what changed
 - what can be copied directly
 - what is optional
@@ -154,28 +168,34 @@ Examples:
 
 ---
 
-## Short-term reality (before a CLI exists)
+## Refresh the installed tool and the local instance separately
 
-For now, the realistic model is:
-- branch + PR changes in upstream
-- tag releases
-- publish upgrade notes
-- manually port selected changes into downstream instances
+The global CLI and a downstream working instance are different things. Refresh
+the first from a release tag, then apply the second through the ownership model:
 
-That is enough to make the project reusable without pretending automatic sync is solved.
+```bash
+mole upgrade 0.2.8
+mole install skills
+```
+
+The command updates the globally installed CLI and bundled scaffold. It does
+not rewrite an existing instance's local product context. Review the changelog
+and release notes, then apply only the upstream-owned additions and deliberate
+manual merges that fit the instance.
 
 ---
 
 ## Longer-term path
 
-If the project matures, the next step is a small scaffolding/upgrade CLI.
+The current CLI refreshes the installed tool from a tagged release but does
+not automatically merge changes into a customised workspace.
 
-Potential future commands:
+Potential future improvements:
 
 ```bash
 npx product-mole init
 npx product-mole check-updates
-npx product-mole upgrade
+npx product-mole upgrade --report
 ```
 
 That CLI would eventually:

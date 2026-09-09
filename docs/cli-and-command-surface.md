@@ -111,14 +111,19 @@ mole review conflicts
 ```
 
 ### Init / upgrade
-Used to scaffold or evolve an instance.
+Used to scaffold an instance, compare it with the installed source, or refresh
+the global CLI from a stable release tag.
 
 Examples:
 ```bash
 mole init
 mole check-updates
-mole upgrade
+mole upgrade 0.2.8
 ```
+
+Pass a target release to `mole upgrade`; without one, it uses the tag matching
+the installed CLI version. The command updates the global tool and bundled
+scaffold, not a customised workspace.
 
 ---
 

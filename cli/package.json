@@ -8,5 +8,6 @@
   },
   "bin": {
     "mole": "./mole.mjs"
-  }
+  },
+  "license": "MIT"
 }

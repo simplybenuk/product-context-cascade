@@ -1,4 +1,4 @@
-# Release Checklist
+# Release checklist
 
 Use this for lightweight, branch-based releases of Mole.
 
@@ -12,6 +12,24 @@ Keep `main` in a generally releasable state. Do not create a permanent
 `staging` branch unless the project has a separate deployed environment that
 needs it.
 
+## Automated gates
+
+Run these from the repository root before asking for a release review:
+
+- [ ] `npm test` passes
+- [ ] `npm run check:versions` passes
+- [ ] `npm run check:package` passes and verifies the packed artifact can be
+  installed and its CLI can run
+- [ ] CI is green on every declared Node.js support line: 18.x, 20.x, 22.x,
+  and 24.x
+- [ ] `npm run check:release` passes
+- [ ] If checking the exact tagged commit, `npm run check:release:tag` passes
+
+The strict release check catches version drift, missing MIT metadata or license
+text, a missing packaged `LICENSE`, a stale README install target, and an
+unconfirmed copyright holder. The tag variant also requires `HEAD` to point at
+`vX.Y.Z`.
+
 ## Before release
 
 - [ ] Changes are on a feature/docs/fix branch, not direct on `main`
@@ -20,6 +38,8 @@ needs it.
 - [ ] `CHANGELOG.md` updated
 - [ ] `VERSION` updated
 - [ ] Root and CLI package versions match `VERSION`
+- [ ] `LICENSE` contains the maintainer-confirmed copyright holder
+- [ ] Root and CLI package metadata declare `MIT`
 - [ ] Any new templates/docs are linked from README where appropriate
 
 ## For upgrade-affecting releases

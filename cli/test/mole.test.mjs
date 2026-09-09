@@ -20,8 +20,14 @@ import {
   getInstallBanner,
   getUpgradeCommand,
   installMoleSkills,
+  normalizeReleaseVersion,
   parseInboxCompleteValues
 } from '../mole.mjs';
+import {
+  getReleaseConsistencyErrors,
+  getReleaseMetadata
+} from '../../scripts/check-release-consistency.mjs';
+import { createGitSnapshot } from '../../scripts/verify-package.mjs';
 import { buildUiCaptureContent, createCaptureRelPath } from '../../ui/server.mjs';
 
 const testDir = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +123,7 @@ describe('help', () => {
     assert.match(output, /mole install skills\s+Install Mole agent skills into ~\/\.agents\/skills/);
     assert.match(output, /More help:\n  https:\/\/github\.com\/simplybenuk\/product-mole#readme/);
     assert.match(output, /mole check-updates/);
-    assert.match(output, /mole upgrade/);
+    assert.match(output, /mole upgrade 0\.2\.8/);
     assert.match(output, /mole doctor/);
     assert.doesNotMatch(output, /Cascade/);
     assert.doesNotMatch(output, /mole install codex/);
@@ -336,13 +342,181 @@ describe('skills installer', () => {
 });
 
 describe('upgrade command', () => {
-  it('updates the installed Mole CLI from the GitHub main branch', () => {
+  it('uses the current source version stable tag by default', () => {
     assert.deepEqual(getUpgradeCommand(), [
       'npm',
       'install',
       '-g',
-      'github:simplybenuk/product-mole#main'
+      'github:simplybenuk/product-mole#v0.2.8'
     ]);
+  });
+
+  it('accepts an explicit release version with or without the v prefix', () => {
+    assert.equal(getUpgradeCommand('0.2.7').at(-1), 'github:simplybenuk/product-mole#v0.2.7');
+    assert.equal(getUpgradeCommand('v0.2.7').at(-1), 'github:simplybenuk/product-mole#v0.2.7');
+    assert.equal(normalizeReleaseVersion('  v0.2.7  '), '0.2.7');
+  });
+
+  it('rejects moving branches and malformed upgrade refs', () => {
+    assert.throws(() => getUpgradeCommand('main'), /stable SemVer release/);
+    assert.throws(() => getUpgradeCommand('0.2'), /stable SemVer release/);
+  });
+});
+
+
+describe('release metadata', () => {
+  it('keeps the release version and MIT metadata internally consistent', () => {
+    const metadata = getReleaseMetadata(repoRoot);
+
+    assert.equal(metadata.version, '0.2.8');
+    assert.equal(metadata.packageVersion, '0.2.8');
+    assert.equal(metadata.cliPackageVersion, '0.2.8');
+    assert.equal(metadata.packageLicense, 'MIT');
+    assert.equal(metadata.cliPackageLicense, 'MIT');
+    assert.match(metadata.licenseText, /MIT License/);
+    assert.match(metadata.licenseText, /Permission is hereby granted/);
+    assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
+  });
+
+  it('preserves prerelease suffixes in README version checks', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0-rc.1';
+      fs.mkdirSync(path.join(dir, 'cli'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'VERSION'), version + '\n', 'utf8');
+      fs.writeFileSync(
+        path.join(dir, 'package.json'),
+        JSON.stringify({ version, license: 'MIT', files: ['LICENSE'] }),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'cli', 'package.json'),
+        JSON.stringify({ version, license: 'MIT' }),
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'README.md'),
+        'Current version: ' + version + '\nInstall github:simplybenuk/product-mole#v' + version + '\n',
+        'utf8'
+      );
+      fs.writeFileSync(
+        path.join(dir, 'CHANGELOG.md'),
+        '# Changelog\n\n## [' + version + '] - 2026-09-09\n',
+        'utf8'
+      );
+      fs.copyFileSync(path.join(repoRoot, 'LICENSE'), path.join(dir, 'LICENSE'));
+
+      const metadata = getReleaseMetadata(dir);
+
+      assert.equal(metadata.readmeVersion, version);
+      assert.deepEqual(getReleaseConsistencyErrors(metadata), []);
+    });
+  });
+
+  it('rejects dirty worktrees even when the release tag points at HEAD', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0';
+      const metadata = {
+        root: dir,
+        version,
+        packageVersion: version,
+        cliPackageVersion: version,
+        packageLicense: 'MIT',
+        cliPackageLicense: 'MIT',
+        packageFiles: ['LICENSE'],
+        readmeVersion: version,
+        latestChangelogVersion: version,
+        readmeText: 'Install github:simplybenuk/product-mole#v' + version,
+        licenseText: 'MIT License\nPermission is hereby granted\nTHE SOFTWARE IS PROVIDED'
+      };
+      const trackedPath = path.join(dir, 'tracked.txt');
+      const untrackedPath = path.join(dir, 'untracked.txt');
+      const runGit = (args) => {
+        const result = spawnSync('git', args, {
+          cwd: dir,
+          encoding: 'utf8'
+        });
+        assert.equal(result.status, 0, result.stderr);
+      };
+
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      runGit(['init', '--quiet']);
+      runGit(['config', 'user.email', 'mole-test@example.com']);
+      runGit(['config', 'user.name', 'Mole Test']);
+      runGit(['add', 'tracked.txt']);
+      runGit(['commit', '--quiet', '-m', 'baseline']);
+      runGit(['tag', 'v' + version]);
+
+      assert.deepEqual(getReleaseConsistencyErrors(metadata, { requireTag: true }), []);
+
+      fs.writeFileSync(trackedPath, 'changed\n', 'utf8');
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .includes('Worktree must be clean before publication.')
+      );
+
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      fs.writeFileSync(untrackedPath, 'untracked\n', 'utf8');
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .includes('Worktree must be clean before publication.')
+      );
+    });
+  });
+
+  it('rejects ignored package files even when the release tag points at HEAD', () => {
+    withTempInstance((dir) => {
+      const version = '0.3.0';
+      const metadata = {
+        root: dir,
+        version,
+        packageVersion: version,
+        cliPackageVersion: version,
+        packageLicense: 'MIT',
+        cliPackageLicense: 'MIT',
+        packageFiles: ['foo'],
+        readmeVersion: version,
+        latestChangelogVersion: version,
+        readmeText: 'Install github:simplybenuk/product-mole#v' + version,
+        licenseText: 'MIT License\nPermission is hereby granted\nTHE SOFTWARE IS PROVIDED'
+      };
+      const trackedPath = path.join(dir, 'tracked.txt');
+      const ignoredPath = path.join(dir, 'foo', 'secret.txt');
+      const runGit = (args) => {
+        const result = spawnSync('git', args, {
+          cwd: dir,
+          encoding: 'utf8'
+        });
+        assert.equal(result.status, 0, result.stderr);
+      };
+
+      fs.mkdirSync(path.dirname(ignoredPath), { recursive: true });
+      fs.writeFileSync(trackedPath, 'clean\n', 'utf8');
+      fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'mole-fixture', version, files: ['foo'] }), 'utf8');
+      runGit(['init', '--quiet']);
+      fs.writeFileSync(path.join(dir, '.git', 'info', 'exclude'), 'foo/secret.txt\n', 'utf8');
+      runGit(['config', 'user.email', 'mole-test@example.com']);
+      runGit(['config', 'user.name', 'Mole Test']);
+      runGit(['add', 'tracked.txt', 'package.json']);
+      runGit(['commit', '--quiet', '-m', 'baseline']);
+      runGit(['tag', 'v' + version]);
+      fs.writeFileSync(ignoredPath, 'not-in-tag\n', 'utf8');
+
+      assert.ok(
+        getReleaseConsistencyErrors(metadata, { requireTag: true })
+          .some((error) => error.includes('Tagged package includes files absent from HEAD'))
+      );
+
+      const releaseScript = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')
+      ).scripts['check:release:tag'];
+      assert.match(releaseScript, /verify-package\.mjs --from-head$/);
+
+      withTempInstance((snapshotDir) => {
+        createGitSnapshot(dir, 'HEAD', snapshotDir);
+        assert.ok(fs.existsSync(path.join(snapshotDir, 'package.json')));
+        assert.ok(!fs.existsSync(path.join(snapshotDir, 'foo', 'secret.txt')));
+      });
+    });
   });
 });
 

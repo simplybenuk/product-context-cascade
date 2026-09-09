@@ -4,6 +4,21 @@ All notable changes to Mole should be documented here.
 
 The format is loosely based on Keep a Changelog and uses lightweight SemVer.
 
+## [Unreleased]
+
+### Added
+- Added MIT package metadata, a root `LICENSE` file, and a strict release guard.
+- Added Node.js CI coverage for 18.x, 20.x, 22.x, and 24.x.
+- Added packed-artifact and clean-install verification for the published package.
+
+### Changed
+- `mole upgrade [version]` now installs from an explicit `vX.Y.Z` release tag.
+- Added release, upgrade, contribution, and development guidance for the
+  open-source package lifecycle.
+
+The intended MIT terms are prepared, but release publication remains blocked
+until a maintainer confirms the copyright-holder line in `LICENSE`.
+
 ## [0.2.8] - 2026-06-17
 
 ### Fixed

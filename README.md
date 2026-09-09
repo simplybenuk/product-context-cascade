@@ -6,6 +6,12 @@ Current version: `0.2.8`
 
 It gives teams a file-based place to capture messy product inputs, distil them into structured evidence, and generate better roadmaps, specs, decisions, and prioritisation work from shared context. Mole is designed to work locally, in synced folders such as SharePoint/OneDrive or Google Drive, or alongside a codebase in Git.
 
+## License
+
+Mole is intended to be released under the MIT License. The full text is in [LICENSE](LICENSE).
+The copyright-holder line in that file must be confirmed by a maintainer before
+a release is published.
+
 ---
 
 ## Installation
@@ -97,7 +103,23 @@ After installing skills, ask your agent for Mole-specific work such as:
 | `mole inbox audit` | Recursively audits the live inbox and reports processed versus unexplained files. |
 | `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
-| `mole upgrade` | Updates the globally installed Mole CLI from the latest unreleased `main` branch. |
+| `mole upgrade [version]` | Updates the globally installed Mole CLI from a stable release tag. With no version, it reuses the installed CLI's version tag. |
+
+## Development
+
+Mole supports Node.js 18.x, 20.x, 22.x, and 24.x. CI runs the repository
+checks on each version.
+
+From the repository root, run:
+
+```bash
+npm test
+npm run check:versions
+npm run check:package
+```
+
+`npm run check:release` adds the strict release guard. It must pass before
+publishing a tag.
 
 ## Stakeholder memory and product updates
 
@@ -169,14 +191,17 @@ Mole separates the installed tool from generated working instances.
 When the source/tool changes, update the global install:
 
 ```bash
-npm install -g github:simplybenuk/product-mole#v0.2.8
+mole upgrade 0.2.8
 mole install skills
 ```
 
-Use a tagged version for stable updates. Use `#main` only when you need the
-latest unreleased source.
+`mole upgrade <version>` refreshes the globally installed CLI from a stable
+release tag. Pass `0.2.8` or `v0.2.8` to select a release explicitly.
+With no argument, it uses the tag matching the installed CLI version. It does
+not use the moving `main` branch.
 
-If your installed `mole upgrade` only prints upgrade documentation, you are on an older placeholder build. Run the `npm install -g ...` command once; after `0.2.1`, `mole upgrade` performs that update for you.
+If an older CLI does not support version selection, install a tagged release
+with the command in the Installation section, then run `mole upgrade` normally.
 
 Why both?
 - `npm install -g ...` refreshes the CLI, bundled scaffold, docs, and skill files
@@ -201,7 +226,10 @@ mole check-updates
 - safe additions from `upgrade-ownership.json`
 - manual review paths that may contain local customisation
 
-`mole upgrade` updates the installed Mole CLI and bundled scaffold. It does not rewrite an existing workspace's local product context.
+`mole upgrade [version]` updates the globally installed Mole CLI and bundled
+scaffold from the GitHub tag `vX.Y.Z`. It never rewrites an existing workspace's
+local product context. Upgrade a workspace separately by reviewing the release
+notes and applying only the ownership classes you choose.
 
 ## What currently works
 
