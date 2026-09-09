@@ -75,8 +75,8 @@ Usage:
   mole synthesise <target>             Print an agent instruction for synthesis work.
   mole review <target>                 Print an agent instruction for review work.
   mole inbox claim [processor]         Claim a run with a leased, owned lock.
-  mole inbox heartbeat [--run-id id]   Renew an active run lease.
-  mole inbox checkpoint [--processed path]
+  mole inbox heartbeat --run-id id     Renew the matching active run lease.
+  mole inbox checkpoint --run-id id [--processed path]
                                       Save restart-safe partial progress.
   mole inbox audit                    Audit live files, leases, conflicts, and receipts.
   mole inbox complete [options] [summary]

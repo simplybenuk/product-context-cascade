@@ -145,3 +145,9 @@
 - Published as draft PR [#28](https://github.com/simplybenuk/product-mole/pull/28) against `main`; the exact `@codex review` comment is attached.
 - Branch status: `codex/issue-21` is pushed and synchronized with `origin/codex/issue-21`; worktree is clean.
 - Next handoff: human output testing and the requested automated review on PR #28; do not merge until those checks pass.
+
+2026-09-09
+
+- Addressed the next automated-review findings for issue #21: serialized local lock mutations, added full-state/version checks around every lock replacement, required explicit matching run IDs for post-claim mutations and audited recovery, rejected completed IDs during stale recovery, narrowed sync-copy detection, and made receipt filenames hash-suffixed after run-ID validation.
+- Added regressions for missing run IDs, inherited stale checkpoints, completed replacement IDs, unsafe receipt IDs, and ordinary `duplicate-orders.md` names; updated shared-folder recovery documentation.
+- Validation: `npm test` passed with 51 tests; `node --check` passed; `git diff --check` passed.

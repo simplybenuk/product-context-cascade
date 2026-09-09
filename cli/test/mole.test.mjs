@@ -601,6 +601,7 @@ describe('inbox processing lock and receipt', () => {
   it('fails closed without a claim and permits only an audited missing-lock override', () => {
     withTempInstance((dir) => {
       const refused = completeInboxProcessing(dir, {
+        runId: 'missing-run',
         claimedBy: 'Ada',
         host: 'host-a',
         completedAt: new Date('2026-05-13T10:21:12.345Z'),
@@ -720,6 +721,8 @@ describe('inbox processing lock and receipt', () => {
       const refused = runCli([
         'inbox',
         'complete',
+        '--run-id',
+        'missing-cli-run',
         '--processed',
         '6-raw/inbox/a.md',
         'Promoted',
@@ -883,6 +886,40 @@ describe('inbox processing lock and receipt', () => {
     });
   });
 
+  it('requires an explicit matching run ID for every post-claim mutation', () => {
+    withTempInstance((dir) => {
+      claimInboxProcessing(dir, {
+        runId: 'explicit-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+
+      const heartbeat = heartbeatInboxProcessing(dir, {
+        processor: 'Ada',
+        host: 'laptop-a',
+        now: new Date('2026-09-08T10:01:00.000Z')
+      });
+      const checkpoint = checkpointInboxProcessing(dir, {
+        processor: 'Ada',
+        host: 'laptop-a',
+        processed: ['6-raw/inbox/a.md'],
+        now: new Date('2026-09-08T10:02:00.000Z')
+      });
+      const completion = completeInboxProcessing(dir, {
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T10:03:00.000Z')
+      });
+
+      assert.equal(heartbeat.code, 'RUN_ID_REQUIRED');
+      assert.equal(checkpoint.code, 'RUN_ID_REQUIRED');
+      assert.equal(completion.code, 'RUN_ID_REQUIRED');
+      assert.equal(inspectInboxProcessing(dir).lock.run_id, 'explicit-run');
+      assert.equal(inspectInboxProcessing(dir).lock.lock_version, 1);
+    });
+  });
+
   it('rejects missing, foreign, and expired normal completion', () => {
     withTempInstance((dir) => {
       const missing = completeInboxProcessing(dir, {
@@ -1021,6 +1058,15 @@ describe('inbox processing lock and receipt', () => {
         now: new Date('2026-09-08T10:00:00.500Z')
       });
 
+      const missingRunId = overrideStaleInboxProcessing(dir, {
+        processor: 'Grace',
+        host: 'laptop-b',
+        reason: 'A replacement must identify its run explicitly.',
+        now: new Date('2026-09-08T10:00:02.000Z')
+      });
+      assert.equal(missingRunId.ok, false);
+      assert.equal(missingRunId.code, 'RUN_ID_REQUIRED');
+
       const recovered = overrideStaleInboxProcessing(dir, {
         runId: 'resumed-run',
         processor: 'Grace',
@@ -1067,6 +1113,72 @@ describe('inbox processing lock and receipt', () => {
       const audit = auditInbox(dir, { now: new Date('2026-09-08T10:00:02.000Z') });
       assert.equal(audit.overrides.length, 1);
       assert.equal(audit.overrides[0].override.reason, recovered.override.reason);
+    });
+  });
+
+  it('rejects stale recovery into a run that already has a completion receipt', () => {
+    withTempInstance((dir) => {
+      claimInboxProcessing(dir, {
+        runId: 'completed-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        now: new Date('2026-09-08T09:00:00.000Z')
+      });
+      completeInboxProcessing(dir, {
+        runId: 'completed-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T09:01:00.000Z')
+      });
+
+      claimInboxProcessing(dir, {
+        runId: 'stale-run',
+        processor: 'Ada',
+        host: 'laptop-a',
+        leaseMs: 1000,
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+      const recovered = overrideStaleInboxProcessing(dir, {
+        runId: 'completed-run',
+        processor: 'Grace',
+        host: 'laptop-b',
+        reason: 'Do not reuse a completed run ID.',
+        now: new Date('2026-09-08T10:00:02.000Z')
+      });
+
+      assert.equal(recovered.ok, false);
+      assert.equal(recovered.code, 'RUN_ALREADY_COMPLETED');
+      assert.equal(inspectInboxProcessing(dir).lock.run_id, 'stale-run');
+      assert.equal(inspectInboxProcessing(dir).overrides.length, 0);
+    });
+  });
+
+  it('validates run IDs before using them as receipt filenames', () => {
+    withTempInstance((dir) => {
+      const invalid = claimInboxProcessing(dir, {
+        runId: 'a/b',
+        processor: 'Ada',
+        host: 'laptop-a'
+      });
+      assert.equal(invalid.ok, false);
+      assert.equal(invalid.code, 'INVALID_RUN_ID');
+
+      const valid = claimInboxProcessing(dir, {
+        runId: 'a_b',
+        processor: 'Ada',
+        host: 'laptop-a',
+        now: new Date('2026-09-08T10:00:00.000Z')
+      });
+      const completed = completeInboxProcessing(dir, {
+        runId: 'a_b',
+        processor: 'Ada',
+        host: 'laptop-a',
+        completedAt: new Date('2026-09-08T10:01:00.000Z')
+      });
+
+      assert.equal(valid.ok, true);
+      assert.equal(completed.ok, true);
+      assert.match(completed.receiptPath, /[\\/]a_b-[0-9a-f]{16}\.json$/);
     });
   });
 

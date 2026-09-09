@@ -78,8 +78,8 @@ mole critique spec drafts/spec.md
 | `mole synthesise <target>` | Prints an agent instruction for synthesising a target using the Mole operating model. |
 | `mole review <target>` | Prints an agent instruction for reviewing a target and surfacing next actions. |
 | `mole inbox claim [processor]` | Claims a run with a leased, owned lock and returns its `run_id`. |
-| `mole inbox heartbeat [--run-id <id>]` | Renews an active run lease. |
-| `mole inbox checkpoint [--processed <path>]` | Saves restart-safe partial progress. |
+| `mole inbox heartbeat --run-id <id>` | Renews the matching active run lease. |
+| `mole inbox checkpoint --run-id <id> [--processed <path>]` | Saves restart-safe partial progress for the matching run. |
 | `mole inbox audit` | Recursively audits the root, live files, leases, sync conflicts, overrides, and receipts. |
 | `mole inbox complete [options] [summary]` | Writes one idempotent receipt for the owned run, records metrics, and releases its lock. |
 | `mole inbox override-stale [options]` | Replaces an expired lock only through an audited override. |
@@ -108,4 +108,4 @@ Before synthesis, run `mole inbox audit`. It excludes the instructional root `RE
 
 Backfill reads `governance/run-receipts/inbox-processing/*.json` and counts only receipt `processed` paths with valid completion dates. It does not infer from raw folders.
 
-In a synced folder, file coordination can lag. Mole refuses to choose between competing claims, duplicate receipt copies, or conflict-named source files. Preserve every copy and resolve it explicitly. A missing or expired lock also fails normal completion. Use `mole inbox override-stale` or `--override-missing-lock --reason "..."` only after checking the sync history; override records are retained under `governance/run-receipts/inbox-processing/overrides/`.
+In a synced folder, file coordination can lag. Mole refuses to choose between competing claims, duplicate receipt copies, or conflict-named source files. Preserve every copy and resolve it explicitly. A missing or expired lock also fails normal completion. Use `mole inbox override-stale --run-id <new-run-id>` or `--override-missing-lock --run-id <run-id> --reason "..."` only after checking the sync history; override records are retained under `governance/run-receipts/inbox-processing/overrides/`.

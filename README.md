@@ -94,8 +94,8 @@ After installing skills, ask your agent for Mole-specific work such as:
 | `mole synthesise <target>` | Prints an agent instruction for synthesising a target using the Mole operating model. |
 | `mole review <target>` | Prints an agent instruction for reviewing a target and surfacing next actions. |
 | `mole inbox claim [processor]` | Claims a run with a leased, owned lock and returns its `run_id`. |
-| `mole inbox heartbeat [--run-id <id>]` | Renews an active run lease for a long processing pass. |
-| `mole inbox checkpoint [--processed <path>]` | Saves partial progress in the active run for restart-safe processing. |
+| `mole inbox heartbeat --run-id <id>` | Renews the matching active run lease for a long processing pass. |
+| `mole inbox checkpoint --run-id <id> [--processed <path>]` | Saves partial progress in the matching active run for restart-safe processing. |
 | `mole inbox audit` | Recursively audits live files, leases, sync conflicts, overrides, and receipts. |
 | `mole inbox complete [options] [summary]` | Writes one idempotent receipt for the owned run, records metrics, and releases its lock. |
 | `mole inbox override-stale [options]` | Replaces an expired lock only after an explicit, auditable recovery decision. |
@@ -155,17 +155,17 @@ For existing workspaces, run `mole metrics backfill` after upgrading to rebuild 
 
 ## Shared-folder processing
 
-The inbox workflow works in a local folder and in a folder synced by OneDrive, SharePoint, Google Drive, Dropbox, or a similar client. The lock is still a set of files, not a service-side distributed lock. A sync client can delay, duplicate, or reorder file changes.
+The inbox workflow works in a local folder and in a folder synced by OneDrive, SharePoint, Google Drive, Dropbox, or a similar client. The lock is still a set of files, not a service-side distributed lock. Each mutating operation serializes local lock updates and verifies the complete lock state plus its monotonic version before and after writing, but a sync client can still delay, duplicate, or reorder file changes.
 
 For every processing pass:
 
 1. Run `mole doctor` and `mole inbox audit`.
 2. Claim a run and keep its `run_id`: `mole inbox claim "Your Name"`.
-3. Pass `--run-id` and `--processor` to heartbeats, checkpoints, and completion. Checkpoint each promoted path so a restart can skip paths already recorded in `processed_paths`.
+3. Pass the exact returned `--run-id` and `--processor` to every heartbeat, checkpoint, and completion. These mutating commands refuse a missing, malformed, or different run ID. Checkpoint each promoted path so a restart can skip paths already recorded in `processed_paths`.
 4. Complete only after the promoted output and retrieval receipt exist. The receipt stores the run, lease, claimed paths, processed paths, unresolved paths, and lock snapshot.
 5. Run `mole inbox audit` again.
 
-Normal completion refuses a missing, expired, foreign, duplicate, or conflicted state. If a lease is stale, inspect the folder's sync history and preserve all copies before using `mole inbox override-stale --reason "..."`. If the lock is missing, use `--override-missing-lock --reason "..."` only when the run history is clear. Each override records the actor, host, time, reason, replacement run, and replaced lock under `governance/run-receipts/inbox-processing/overrides/`.
+Normal completion refuses a missing, expired, foreign, duplicate, or conflicted state. If a lease is stale, inspect the folder's sync history and preserve all copies before using `mole inbox override-stale --run-id <new-run-id> --reason "..."`; the replacement ID must not already have a completion receipt. If the lock is missing, use `--override-missing-lock --run-id <run-id> --reason "..."` only when the run history is clear. Run IDs are validated before they become receipt filenames. Each override records the actor, host, time, reason, replacement run, and replaced lock under `governance/run-receipts/inbox-processing/overrides/`.
 
 Mole never deletes or moves source files to resolve a sync conflict. Conflict-named source files, lock copies, and duplicate receipt files are reported by `mole inbox audit`; keep every copy until a person decides how to handle it.
 
