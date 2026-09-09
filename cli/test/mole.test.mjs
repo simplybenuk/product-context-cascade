@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,8 @@ import {
   buildSourceReference,
   classifyLegacyPathReference,
   findSourceConflicts,
+  discoverLegacyPathReferences,
+  hashSourceBytes,
   hashSourceFile,
   loadSourceRegistry,
   migrateLegacyPathReferences,
@@ -74,6 +76,27 @@ function runCli(args, options = {}) {
     fs.closeSync(stderrFd);
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+function runCliAsync(args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [moleCliPath, ...args], {
+      cwd: options.cwd,
+      env: options.env || process.env,
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (status, signal) => {
+      resolve({ status, signal, stdout, stderr });
+    });
+  });
 }
 
 describe('doctor', () => {
@@ -563,6 +586,26 @@ describe('stable source provenance', () => {
     });
   });
 
+  it('hashes binary source bytes without UTF-8 normalization', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const firstPath = path.join(inbox, 'first.bin');
+      const secondPath = path.join(inbox, 'second.bin');
+      const firstBytes = Buffer.from([0xff, 0x00, 0x61, 0x0a]);
+      const secondBytes = Buffer.from([0xfe, 0x00, 0x61, 0x0a]);
+      fs.writeFileSync(firstPath, firstBytes);
+      fs.writeFileSync(secondPath, secondBytes);
+
+      assert.equal(hashSourceFile(firstPath), hashSourceBytes(firstBytes));
+      assert.notEqual(hashSourceFile(firstPath), hashSourceFile(secondPath));
+      registerSourceFile(dir, firstPath, { sourceId: 'src_binary-first' });
+      registerSourceFile(dir, secondPath, { sourceId: 'src_binary-second' });
+      const findings = findSourceConflicts(dir, { includeUnregisteredFiles: true });
+      assert.equal(findings.some((finding) => finding.code === 'same-content-hash' || finding.code === 'unregistered-same-content-hash'), false);
+    });
+  });
+
   it('adopts an imported export through the source command without rewriting it', () => {
     withTempInstance((dir) => {
       const relative = '6-raw/inbox/import.json';
@@ -623,6 +666,32 @@ describe('stable source provenance', () => {
     assert.match(content, /source_reference: \{"kind":"external","value":"call-123"\}/);
     assert.match(content, /visibility: restricted/);
     assert.match(content, /retention: \{"policy":"legal","retain_until":"2027-08-31","legal_hold":true\}/);
+  });
+
+  it('rejects duplicate live source IDs before moving a registry record', () => {
+    withTempInstance((dir) => {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const firstRelative = '6-raw/inbox/first.md';
+      const secondRelative = '6-raw/inbox/second.md';
+      const content = ['---', 'source_id: src_duplicate-live', '---', 'Same identity, different live file'].join('\n');
+      fs.writeFileSync(path.join(dir, firstRelative), content, 'utf8');
+
+      const first = registerSourceFile(dir, firstRelative);
+      fs.writeFileSync(path.join(dir, secondRelative), content, 'utf8');
+      const second = registerSourceFile(dir, secondRelative);
+      assert.equal(second.ok, false);
+      assert.equal(second.status, 'ambiguous');
+      assert.equal(second.reason, 'duplicate-live-source-id');
+      const registry = loadSourceRegistry(dir);
+      assert.equal(registry.records.length, 1);
+      assert.equal(registry.records[0].current_path, firstRelative);
+      assert.equal(registry.records[0].path_history.some((entry) => entry.path === secondRelative), false);
+      assert.ok(findSourceConflicts(dir).some((finding) => finding.code === 'live-duplicate-source-id'));
+      const resolved = resolveSourceReference(dir, { source_id: 'src_duplicate-live' });
+      assert.equal(resolved.status, 'ambiguous');
+      assert.equal(resolved.reason, 'duplicate-live-source-id');
+    });
   });
 
   it('resolves a source after an archive move and records a content correction', () => {
@@ -749,6 +818,23 @@ describe('stable source provenance', () => {
     });
   });
 
+  it('ignores scaffold guidance and directory examples during legacy discovery', () => {
+    withTempInstance((dir) => {
+      createWorkspaceScaffold(dir);
+      const fresh = discoverLegacyPathReferences(dir);
+      assert.deepEqual(fresh, []);
+      const migrated = migrateLegacyPathReferences(dir, fresh, { adopt: true });
+      assert.equal(migrated.results.length, 0);
+      assert.equal(loadSourceRegistry(dir).records.length, 0);
+
+      const realPath = path.join(dir, '4-context', 'real.md');
+      fs.writeFileSync(realPath, 'Evidence lives at 6-raw/inbox/real-note.md\n', 'utf8');
+      assert.deepEqual(discoverLegacyPathReferences(dir), [
+        { path: '6-raw/inbox/real-note.md', referenced_in: '4-context/real.md' }
+      ]);
+    });
+  });
+
   it('reports duplicate and path conflicts without merging records', () => {
     withTempInstance((dir) => {
       const firstRelative = '6-raw/inbox/first.md';
@@ -785,6 +871,23 @@ describe('stable source provenance', () => {
       assert.ok(findings.some((finding) => finding.code === 'path-has-multiple-source-ids'));
       assert.equal(loadSourceRegistry(dir).records.length, 3);
     });
+  });
+
+  it('serializes concurrent source imports without dropping records', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mole-concurrency-'));
+    try {
+      const inbox = path.join(dir, '6-raw', 'inbox');
+      fs.mkdirSync(inbox, { recursive: true });
+      const relatives = Array.from({ length: 6 }, (_, index) => '6-raw/inbox/concurrent-' + index + '.json');
+      for (const relative of relatives) fs.writeFileSync(path.join(dir, relative), JSON.stringify({ index: relative }) + '\n', 'utf8');
+      const results = await Promise.all(relatives.map((relative) => runCliAsync(['sources', 'import', relative], { cwd: dir })));
+      for (const result of results) assert.equal(result.status, 0, result.stderr);
+      const registry = loadSourceRegistry(dir);
+      assert.equal(registry.records.length, relatives.length);
+      assert.deepEqual(new Set(registry.records.map((record) => record.current_path)), new Set(relatives));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('writes source IDs into inbox receipts and deduplicates metrics across path changes', () => {

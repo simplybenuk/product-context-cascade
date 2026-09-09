@@ -150,3 +150,12 @@
 - Human output focus: confirm raw bytes remain unchanged during import and migration, source IDs remain stable after moves/corrections, duplicate/conflict findings stay actionable, and evidence/context/receipts use source IDs rather than filenames.
 - Verdict: READY FOR HUMAN TESTING. Successful human testing hands the accepted change to bwh-archive-change; additional findings return to bwh-development.
 - Next: commit the completed change, push codex/issue-23, create one draft PR targeting main, and request the project review with the exact comment @codex review.
+
+2026-09-09
+
+- Completed the four P1 remediation fixes from automated review: non-text sources and attachments hash raw bytes, duplicate live source IDs are rejected as ambiguous before registry mutation, source-registry updates use a cross-process lock plus atomic replacement, and legacy discovery excludes scaffold guidance and directory examples by default.
+- Added focused regressions for binary hash identity, duplicate live IDs, fresh scaffold migration, and concurrent source imports.
+- Independent bwh-agent-review: READY FOR HUMAN TESTING. No blocking or should-fix findings remain.
+- Validation: node --check passed for changed JavaScript modules; npm test passed with 53 tests; fresh scaffold discovery probe returned []; git diff --check passed.
+- Human output focus: verify import/migration preserves raw bytes, duplicate-ID warnings remain actionable, concurrent captures retain every registry record, and scaffold guidance is absent from migration reports.
+- Next: commit and push codex/issue-23, then request the exact @codex review comment again; do not merge.

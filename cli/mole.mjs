@@ -86,7 +86,7 @@ Usage:
                                       Adopt a file or imported export without rewriting it.
   mole sources import <path> [options]
                                       Register an imported export with source provenance.
-  mole sources migrate [--write]
+  mole sources migrate [--write] [--include-guidance]
                                       Classify legacy path-only references and conflicts.
   mole sources sync <source-id>       Recheck a source after a correction or move.
   mole sources audit                  Report duplicate and conflicting source records.
@@ -450,6 +450,10 @@ function captureInsight(values) {
   } catch (error) {
     console.warn(`Warning: source registry update failed: ${error.message}`);
   }
+  if (sourceRecord?.ok === false) {
+    console.warn('Warning: source registry update ambiguous: ' + (sourceRecord.reason || 'human review required'));
+    process.exitCode = 1;
+  }
   console.log(`Captured insight: ${target}`);
   console.log(`Source ID: ${sourceRecord?.record?.source_id || provenance.sourceId}`);
   console.log('\nSuggested next command:');
@@ -805,6 +809,8 @@ function parseSourceCommandValues(values = []) {
     const next = values[index + 1];
     if (value === '--write') {
       options.write = true;
+    } else if (value === '--include-guidance') {
+      options.includeGuidance = true;
     } else if (value === '--source-type' && next) {
       options.sourceType = next;
       index += 1;
@@ -861,6 +867,12 @@ function runSourcesCommand(action, values = []) {
       sourceType: options.sourceType || (action === 'import' ? 'imported_export' : 'local_file'),
       channel: options.channel || (action === 'import' ? 'import' : 'file')
     });
+    if (!result.ok) {
+      console.error('Source registration ' + (result.status || 'failed') + ': ' + (result.reason || 'human review required'));
+      for (const finding of result.conflicts || []) console.error('- ' + finding.message);
+      process.exitCode = 1;
+      return;
+    }
     console.log(`Source registered: ${result.record.source_id}`);
     console.log(`Current path: ${result.record.current_path || 'external reference'}`);
     console.log(`Content hash: ${result.record.content_hash}`);

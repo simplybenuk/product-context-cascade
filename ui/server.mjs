@@ -211,6 +211,9 @@ async function routeApi(req, res, urlObj) {
     } catch (error) {
       provenanceWarning = error.message;
     }
+    if (sourceRecord?.ok === false) {
+      provenanceWarning = sourceRecord.reason || 'duplicate-live-source-id';
+    }
 
     return send(res, 200, {
       ok: true,
