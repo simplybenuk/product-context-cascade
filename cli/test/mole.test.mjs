@@ -5,12 +5,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import { createCaptureFileName, resolveCapturedBy } from '../../lib/capture.mjs';
 import {
   claimInboxProcessing,
   completeInboxProcessing,
   heartbeatInboxProcessing,
   checkpointInboxProcessing,
+  getInboxMutationProcessIdentity,
   inspectInboxProcessing,
   overrideStaleInboxProcessing
 } from '../../lib/inbox-processing.mjs';
@@ -1575,6 +1577,227 @@ describe('inbox processing lock and receipt', () => {
       assert.equal(result.processed_paths_counted, 0);
       assert.deepEqual(JSON.parse(fs.readFileSync(getMetricsPaths(dir).dailyPath, 'utf8')).records, []);
     });
+  });
+});
+
+describe('inbox mutation race regressions', () => {
+  for (const retry of [false, true]) {
+    for (const arrival of ['before detach', 'after detach', 'during restore']) {
+      it('preserves arriving locks ' + arrival + (retry ? ' on completion retry' : ''), (t) => {
+        withTempInstance((dir) => {
+          const options = { runId: 'owned', processor: 'Ada', host: 'laptop-a' };
+          const claimed = claimInboxProcessing(dir, options);
+          assert.equal(claimed.ok, true);
+          const lockPath = path.join(dir, 'governance/inbox-processing.lock.json');
+          if (retry) {
+            assert.equal(completeInboxProcessing(dir, options).ok, true);
+            fs.writeFileSync(lockPath, JSON.stringify(claimed.lock));
+          }
+          const incoming = { ...claimed.lock, run_id: 'incoming', lock_id: 'incoming', host: 'laptop-b' };
+          const newer = { ...incoming, run_id: 'newer', lock_id: 'newer', host: 'laptop-c' };
+          const originalRename = fs.renameSync;
+          let detachedPath;
+          const hook = t.mock.method(fs, 'renameSync', (from, to) => {
+            if (from !== lockPath) return originalRename(from, to);
+            detachedPath = to;
+            if (arrival !== 'after detach') fs.writeFileSync(lockPath, JSON.stringify(incoming));
+            const result = originalRename(from, to);
+            if (arrival !== 'before detach') {
+              fs.writeFileSync(lockPath, JSON.stringify(arrival === 'during restore' ? newer : incoming));
+            }
+            return result;
+          });
+          let result;
+          try { result = completeInboxProcessing(dir, options); }
+          finally { hook.mock.restore(); }
+          assert.ok(detachedPath);
+          assert.deepEqual(JSON.parse(fs.readFileSync(lockPath)), arrival === 'during restore' ? newer : incoming);
+          const state = inspectInboxProcessing(dir);
+          assert.equal(state.receipts.length, 1);
+          if (arrival === 'during restore') {
+            assert.deepEqual(JSON.parse(fs.readFileSync(detachedPath)), incoming);
+            assert.equal(state.conflictLockPaths.length, 1);
+            assert.equal(claimInboxProcessing(dir, { ...options, runId: 'third' }).code, 'SYNC_CONFLICT');
+          } else {
+            assert.equal(fs.existsSync(detachedPath), false);
+          }
+          if (arrival !== 'after detach') {
+            if (retry) assert.equal(result.code, 'LOCK_CHANGED');
+            else assert.match(result.warning, /lock changed/);
+          }
+        });
+      });
+    }
+  }
+
+  for (const { missing, variant } of [false, true].flatMap((missing) =>
+    ['identical', 'owner', 'processed', 'summary', 'incomplete'].map((variant) => ({ missing, variant })))) {
+    it('checks complete contents of a raced receipt: ' + variant + (missing ? ' during missing-lock recovery' : ''), (t) => {
+      withTempInstance((dir) => {
+        const options = { runId: 'receipt-race', processor: 'Ada', host: 'laptop-a',
+          ...(missing ? { overrideMissingLock: true, reason: 'Recovered completed work.' } : {}) };
+        if (!missing) assert.equal(claimInboxProcessing(dir, options).ok, true);
+        const lockPath = path.join(dir, 'governance/inbox-processing.lock.json');
+        const lockBytes = missing ? null : fs.readFileSync(lockPath, 'utf8');
+        const receiptsDir = path.join(dir, 'governance/run-receipts/inbox-processing');
+        const originalWrite = fs.writeFileSync;
+        let racedPath;
+        let racedBytes;
+        const hook = t.mock.method(fs, 'writeFileSync', (file, data, ...args) => {
+          if (path.dirname(String(file)) === receiptsDir && String(file).endsWith('.json')) {
+            racedPath = file;
+            const candidate = JSON.parse(data);
+            if (variant === 'owner') candidate.host = 'other-host';
+            if (variant === 'processed') candidate.processed = ['6-raw/inbox/foreign.md'];
+            if (variant === 'summary') candidate.summary = 'Different completion';
+            if (variant === 'incomplete') delete candidate.completed_at;
+            // Formatting and key order are not part of receipt identity.
+            racedBytes = JSON.stringify(Object.fromEntries(Object.entries(candidate).reverse()));
+            originalWrite(file, racedBytes);
+          }
+          return originalWrite(file, data, ...args);
+        });
+        try {
+          if (variant === 'identical') {
+            const result = completeInboxProcessing(dir, { ...options, processed: ['6-raw/inbox/a.md'] });
+            assert.equal(result.ok, true);
+            assert.equal(result.idempotent, true);
+            assert.equal(fs.existsSync(lockPath), false);
+          } else {
+            assert.throws(() => completeInboxProcessing(dir, options), /different contents/);
+            if (!missing) assert.equal(fs.readFileSync(lockPath, 'utf8'), lockBytes);
+          }
+        } finally { hook.mock.restore(); }
+        assert.equal(fs.readFileSync(racedPath, 'utf8'), racedBytes);
+        assert.equal(fs.readdirSync(receiptsDir).filter((file) => file.endsWith('.json')).length, 1);
+        if (missing) {
+          const state = inspectInboxProcessing(dir);
+          assert.equal(fs.existsSync(lockPath), false);
+          assert.equal(state.overrides.length, 1);
+          assert.equal(state.overrides[0].override.state, variant === 'identical' ? 'finalized' : 'prepared');
+        }
+      });
+    });
+  }
+
+  it('rejects damaged entries in every checkpoint array before any mutation', () => {
+    withTempInstance((dir) => {
+      const options = { runId: 'damaged', processor: 'Ada', host: 'laptop-a' };
+      const claimed = claimInboxProcessing(dir, options);
+      const lockPath = path.join(dir, 'governance/inbox-processing.lock.json');
+      for (const field of ['claimed_paths', 'processed_paths', 'unresolved_paths']) {
+        for (const entry of [null, {}, 7, true, [], '', ' ', './6-raw/inbox/a.md', '6-raw/inbox/../a.md']) {
+          const bytes = JSON.stringify({ ...claimed.lock, [field]: [entry] });
+          fs.writeFileSync(lockPath, bytes);
+          assert.match(inspectInboxProcessing(dir).lockValidationError, new RegExp(field));
+          for (const mutate of [claimInboxProcessing, heartbeatInboxProcessing,
+            checkpointInboxProcessing, completeInboxProcessing, overrideStaleInboxProcessing]) {
+            assert.equal(mutate(dir, { ...options, reason: 'Inspect damaged checkpoint.' }).code, 'INVALID_LOCK');
+          }
+          assert.equal(fs.readFileSync(lockPath, 'utf8'), bytes);
+          assert.equal(inspectInboxProcessing(dir).receipts.length, 0);
+        }
+      }
+    });
+  });
+
+  it('recovers stale mutexes with reused PIDs or damaged metadata but preserves live owners', (t) => {
+    withTempInstance((dir) => {
+      const options = { runId: 'mutex-run', processor: 'Ada', host: 'laptop-a' };
+      assert.equal(claimInboxProcessing(dir, options).ok, true);
+      const key = createHash('sha256').update(path.join(dir, 'governance/inbox-processing.lock.json')).digest('hex');
+      const mutexPath = path.join(os.tmpdir(), 'mole-inbox-processing-' + key + '.json');
+      const mutexDirectory = mutexPath.replace(/\.json$/, '.d');
+      let live;
+      const originalWrite = fs.writeFileSync;
+      const hook = t.mock.method(fs, 'writeFileSync', (file, data, ...args) => {
+        if (path.dirname(String(file)) === mutexDirectory && String(file).endsWith('.json')) {
+          live = JSON.parse(data);
+        }
+        return originalWrite(file, data, ...args);
+      });
+      try { assert.equal(heartbeatInboxProcessing(dir, options).ok, true); }
+      finally { hook.mock.restore(); }
+      assert.ok(live.token);
+      const old = new Date(Date.now() - 10 * 60 * 1000);
+      try {
+        // Recently created malformed records may still be in the middle of a write.
+        fs.writeFileSync(mutexPath, '');
+        assert.equal(heartbeatInboxProcessing(dir, options).code, 'MUTATION_BUSY');
+        for (const content of ['', '{', 'null', JSON.stringify({
+          ...live, process_identity: 'previous-process-with-reused-pid', acquired_at: old.toISOString()
+        }), JSON.stringify({ ...live, process_identity: undefined, acquired_at: old.toISOString() })]) {
+          fs.writeFileSync(mutexPath, content);
+          fs.utimesSync(mutexPath, old, old);
+          assert.equal(heartbeatInboxProcessing(dir, options).ok, true);
+          assert.equal(fs.readFileSync(mutexPath, 'utf8'), content);
+        }
+        if (live.process_identity) {
+          fs.writeFileSync(mutexPath, JSON.stringify({ ...live, acquired_at: old.toISOString() }));
+          fs.utimesSync(mutexPath, old, old);
+          assert.equal(heartbeatInboxProcessing(dir, options).code, 'MUTATION_BUSY');
+        }
+      } finally {
+        if (fs.existsSync(mutexPath)) fs.unlinkSync(mutexPath);
+      }
+    });
+  });
+
+  it('keeps a contender visible while it ignores stale mutex metadata', (t) => {
+    withTempInstance((dir) => {
+      const options = { runId: 'mutex-race', processor: 'Ada', host: 'laptop-a' };
+      assert.equal(claimInboxProcessing(dir, options).ok, true);
+      const key = createHash('sha256').update(path.join(dir, 'governance/inbox-processing.lock.json')).digest('hex');
+      const mutexPath = path.join(os.tmpdir(), 'mole-inbox-processing-' + key + '.json');
+      fs.writeFileSync(mutexPath, '{');
+      const old = new Date(Date.now() - 10 * 60 * 1000);
+      fs.utimesSync(mutexPath, old, old);
+      const originalStat = fs.statSync;
+      let overlapping;
+      let triggered = false;
+      const hook = t.mock.method(fs, 'statSync', (file, ...args) => {
+        if (file === mutexPath && !triggered) {
+          triggered = true;
+          overlapping = checkpointInboxProcessing(dir, {
+            ...options, processed: ['6-raw/inbox/b.md']
+          });
+        }
+        return originalStat(file, ...args);
+      });
+      let first;
+      try {
+        first = checkpointInboxProcessing(dir, {
+          ...options, processed: ['6-raw/inbox/a.md']
+        });
+      } finally {
+        hook.mock.restore();
+        if (fs.existsSync(mutexPath)) fs.unlinkSync(mutexPath);
+      }
+      assert.equal(first.ok, true);
+      assert.equal(overlapping.code, 'MUTATION_BUSY');
+      assert.deepEqual(inspectInboxProcessing(dir).lock.processed_paths, ['6-raw/inbox/a.md']);
+      assert.equal(checkpointInboxProcessing(dir, {
+        ...options, processed: ['6-raw/inbox/b.md']
+      }).ok, true);
+      assert.deepEqual(inspectInboxProcessing(dir).lock.processed_paths,
+        ['6-raw/inbox/a.md', '6-raw/inbox/b.md']);
+    });
+  });
+
+  it('derives process identities through Linux and other Unix paths', () => {
+    assert.match(getInboxMutationProcessIdentity(process.pid), /\S/);
+    assert.match(getInboxMutationProcessIdentity(process.pid, { platform: 'darwin' }), /\S/);
+    let invoked;
+    assert.equal(getInboxMutationProcessIdentity(42, {
+      platform: 'freebsd',
+      execFileSync(command, args, options) {
+        invoked = { command, args, options };
+        return 'Mon Sep  9 10:00:00 2026\n';
+      }
+    }), 'Mon Sep  9 10:00:00 2026');
+    assert.equal(invoked.command, 'ps');
+    assert.deepEqual(invoked.args, ['-p', '42', '-o', 'lstart=']);
+    assert.equal(getInboxMutationProcessIdentity(42, { platform: 'win32' }), null);
   });
 });
 
