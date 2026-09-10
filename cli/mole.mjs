@@ -6,7 +6,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createCaptureFileName, resolveCapturedBy } from '../lib/capture.mjs';
-import { claimInboxProcessing, completeInboxProcessing } from '../lib/inbox-processing.mjs';
+import {
+  claimInboxProcessing,
+  completeInboxProcessing,
+  heartbeatInboxProcessing,
+  checkpointInboxProcessing,
+  overrideStaleInboxProcessing
+} from '../lib/inbox-processing.mjs';
 import { auditInbox } from '../lib/inbox-audit.mjs';
 import { backfillProcessedInboxMetrics, recordProcessedInboxItems } from '../lib/metrics.mjs';
 
@@ -69,10 +75,14 @@ Usage:
   mole refresh top-layers             Print an agent instruction for summary/index refresh.
   mole synthesise <target>             Print an agent instruction for synthesis work.
   mole review <target>                 Print an agent instruction for review work.
-  mole inbox claim [processor]         Claim inbox processing with a file lock.
-  mole inbox audit                    Audit the recursive live inbox and processed receipts.
-  mole inbox complete [--processed path] [summary]
-                                      Write a receipt, record processed paths, and release the lock.
+  mole inbox claim [processor]         Claim a run with a leased, owned lock.
+  mole inbox heartbeat --run-id id     Renew the matching active run lease.
+  mole inbox checkpoint --run-id id [--processed path]
+                                      Save restart-safe partial progress.
+  mole inbox audit                    Audit live files, leases, conflicts, and receipts.
+  mole inbox complete [options] [summary]
+                                      Write an idempotent receipt and release the lock.
+  mole inbox override-stale [options] Replace an expired lock with an audited override.
   mole metrics backfill               Rebuild metrics from inbox processing receipts.
   mole install skills                  Install Mole agent skills into ~/.agents/skills.
   mole check-updates                   Compare this CLI version with the workspace.
@@ -100,8 +110,10 @@ Examples:
   mole install skills
   mole synthesise inbox
   mole review input-queue
-  mole inbox claim
-  mole inbox complete --processed 6-raw/inbox/a.md "Promoted one note"
+  mole inbox claim "Your Name"
+  mole inbox checkpoint --run-id <run-id> --processor "Your Name" --processed 6-raw/inbox/a.md
+  mole inbox complete --run-id <run-id> --processor "Your Name" --processed 6-raw/inbox/a.md "Promoted one note"
+  mole inbox override-stale --run-id <new-run-id> --processor "Your Name" --reason "Confirmed prior run stopped"
   mole metrics backfill
 
 More help:
@@ -676,45 +688,204 @@ function runInboxCommand(action, values = []) {
   if (action === 'audit') {
     const result = auditInbox(cwd);
     console.log('Mole inbox audit');
-    console.log(`workspace root  ${result.workspaceRoot}`);
-    console.log(`live files      ${result.candidates.length}`);
-    console.log(`processed files ${result.processed.length}`);
-    console.log(`unprocessed     ${result.unprocessed.length}`);
-    for (const item of result.unprocessed) console.log(`- ${item}`);
-    if (result.unprocessed.length) process.exitCode = 1;
+    console.log('workspace root  ' + result.workspaceRoot);
+    console.log('live files      ' + result.candidates.length);
+    console.log('processed files ' + result.processed.length);
+    console.log('unprocessed     ' + result.unprocessed.length);
+    for (const item of result.unprocessed) console.log('- ' + item);
+    console.log('sync conflicts  ' + result.syncConflictFiles.length);
+    for (const item of result.syncConflictFiles) console.log('- conflict: ' + item);
+    console.log('duplicate receipts ' + result.duplicateReceipts.length);
+    for (const item of result.duplicateReceipts) {
+      console.log('- duplicate run ' + item.run_id + ': ' + item.paths.join(', '));
+    }
+    console.log('processed path conflicts ' + result.processedPathConflicts.length);
+    for (const item of result.processedPathConflicts) {
+      console.log('- split-brain path ' + item.path + ': '
+        + item.runs.map((run) => run.run_id).join(', '));
+    }
+    console.log('override records ' + result.overrides.length);
+    for (const item of result.overrides) {
+      console.log('- ' + item.path + ': ' + (item.override.type || 'override')
+        + ' by ' + (item.override.actor || 'unknown'));
+    }
+    console.log('invalid overrides ' + result.invalidOverrides.length);
+    for (const item of result.invalidOverrides) {
+      console.log('- invalid override ' + item.path + ': ' + item.error);
+    }
+    console.log('incomplete overrides ' + result.incompleteOverrides.length);
+    for (const item of result.incompleteOverrides) {
+      console.log('- prepared override ' + item.path + ': reconcile before continuing');
+    }
+    if (result.staleLock) {
+      console.log('stale lease     ' + (result.staleLock.run_id || result.staleLock.lock_id || 'unknown'));
+    }
+    for (const issue of result.issues) {
+      console.log('- ' + issue.code + ': ' + issue.message);
+    }
+    if (result.unprocessed.length || result.issues.length) process.exitCode = 1;
     return;
   }
 
   if (action === 'claim') {
-    const result = claimInboxProcessing(cwd, {
-      claimedBy: values.join(' ')
-    });
-    const output = result.ok ? console.log : console.error;
-    output(result.message);
-    if (!result.ok) process.exit(1);
-    return;
-  }
-
-  if (action === 'complete') {
-    const parsed = parseInboxCompleteValues(values);
-    const result = completeInboxProcessing(cwd, {
-      allowMissingLock: true,
-      processed: parsed.processed,
-      summary: parsed.summary || undefined
-    });
-    const output = result.ok ? console.log : console.error;
-    output(result.message);
-    if (!result.ok) process.exit(1);
-
+    let parsed;
     try {
-      recordProcessedInboxItems(cwd, result.receipt.processed);
+      parsed = parseInboxClaimValues(values);
     } catch (err) {
-      console.warn(`Warning: inbox metrics update failed: ${err.message}`);
+      console.error(err.message);
+      process.exit(1);
+    }
+    const result = parsed.overrideStale
+      ? overrideStaleInboxProcessing(cwd, {
+        runId: parsed.runId,
+        processor: parsed.processor || undefined,
+        host: parsed.host || undefined,
+        leaseMs: parsed.leaseMs,
+        claimedPaths: parsed.claimedPaths,
+        reason: parsed.reason,
+        allowConflictCopies: parsed.allowConflictCopies
+      })
+      : claimInboxProcessing(cwd, {
+        runId: parsed.runId,
+        processor: parsed.processor || undefined,
+        host: parsed.host || undefined,
+        leaseMs: parsed.leaseMs,
+        claimedPaths: parsed.claimedPaths,
+        allowConflictCopies: parsed.allowConflictCopies
+      });
+    const output = result.ok ? console.log : console.error;
+    output(result.message);
+    if (!result.ok) process.exit(1);
+    if (result.run_id) console.log('run_id          ' + result.run_id);
+    if (result.overridePath) console.log('override record ' + result.overridePath);
+    if (result.lock?.processed_paths?.length) {
+      console.log('already checkpointed ' + result.lock.processed_paths.join(', '));
     }
     return;
   }
 
-  console.error('Supported inbox commands: claim, complete');
+  if (action === 'heartbeat') {
+    let parsed;
+    try {
+      parsed = parseInboxClaimValues(values);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    const result = heartbeatInboxProcessing(cwd, {
+      runId: parsed.runId,
+      processor: parsed.processor || undefined,
+      host: parsed.host || undefined,
+      leaseMs: parsed.leaseMs,
+      allowConflictCopies: parsed.allowConflictCopies
+    });
+    const output = result.ok ? console.log : console.error;
+    output(result.message);
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  if (action === 'checkpoint') {
+    let parsed;
+    try {
+      parsed = parseInboxCompleteValues(values);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    const result = checkpointInboxProcessing(cwd, {
+      runId: parsed.runId,
+      processor: parsed.processor || undefined,
+      host: parsed.host || undefined,
+      leaseMs: parsed.leaseMs,
+      processed: parsed.processed,
+      allowConflictCopies: parsed.allowConflictCopies
+    });
+    const output = result.ok ? console.log : console.error;
+    output(result.message);
+    if (!result.ok) process.exit(1);
+    return;
+  }
+
+  if (action === 'override-stale' || action === 'recover') {
+    let parsed;
+    try {
+      parsed = parseInboxClaimValues(values);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    const result = overrideStaleInboxProcessing(cwd, {
+      runId: parsed.runId,
+      processor: parsed.processor || undefined,
+      host: parsed.host || undefined,
+      leaseMs: parsed.leaseMs,
+      claimedPaths: parsed.claimedPaths,
+      reason: parsed.reason,
+      allowConflictCopies: parsed.allowConflictCopies
+    });
+    const output = result.ok ? console.log : console.error;
+    output(result.message);
+    if (!result.ok) process.exit(1);
+    if (result.run_id) console.log('run_id          ' + result.run_id);
+    if (result.overridePath) console.log('override record ' + result.overridePath);
+    return;
+  }
+
+  if (action === 'complete') {
+    let parsed;
+    try {
+      parsed = parseInboxCompleteValues(values);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+    const result = parsed.partial
+      ? checkpointInboxProcessing(cwd, {
+        runId: parsed.runId,
+        processor: parsed.processor || undefined,
+        host: parsed.host || undefined,
+        leaseMs: parsed.leaseMs,
+        processed: parsed.processed,
+        allowConflictCopies: parsed.allowConflictCopies
+      })
+      : completeInboxProcessing(cwd, {
+        runId: parsed.runId,
+        processor: parsed.processor || undefined,
+        host: parsed.host || undefined,
+        processed: parsed.processed,
+        summary: parsed.summary || undefined,
+        overrideMissingLock: parsed.overrideMissingLock,
+        reason: parsed.reason,
+        allowConflictCopies: parsed.allowConflictCopies
+      });
+    const output = result.ok ? console.log : console.error;
+    output(result.message);
+    if (!result.ok) process.exit(1);
+    if (result.run_id) console.log('run_id          ' + result.run_id);
+
+    if (result.receipt) {
+      try {
+        if (result.idempotent) {
+          backfillProcessedInboxMetrics(cwd);
+        } else {
+          const completedAt = result.receipt.completed_at
+            ? new Date(result.receipt.completed_at)
+            : null;
+          const metricsOptions = completedAt && !Number.isNaN(completedAt.getTime())
+            ? { now: completedAt }
+            : {};
+          recordProcessedInboxItems(cwd, result.receipt.processed, metricsOptions);
+        }
+      } catch (err) {
+        const action = result.idempotent ? 'reconciliation' : 'update';
+        console.warn('Warning: inbox metrics ' + action + ' failed: ' + err.message);
+      }
+    }
+    return;
+  }
+
+  console.error('Supported inbox commands: claim, heartbeat, checkpoint, audit, complete, override-stale');
   process.exit(1);
 }
 
@@ -733,30 +904,119 @@ function runMetricsCommand(action) {
   process.exit(1);
 }
 
+function readInboxOption(values, index, option) {
+  const value = values[index + 1];
+  if (!value || value.startsWith('--')) {
+    throw new Error('Missing value for ' + option + '.');
+  }
+  return value;
+}
+
+export function parseInboxClaimValues(values = []) {
+  const processorParts = [];
+  const claimedPaths = [];
+  const result = {
+    processor: '',
+    runId: '',
+    host: '',
+    leaseMs: undefined,
+    claimedPaths,
+    reason: '',
+    overrideStale: false,
+    allowConflictCopies: false
+  };
+
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === '--run-id') {
+      result.runId = readInboxOption(values, index, '--run-id');
+      index += 1;
+    } else if (value === '--processor' || value === '--claimed-by' || value === '--actor') {
+      result.processor = readInboxOption(values, index, value);
+      index += 1;
+    } else if (value === '--host') {
+      result.host = readInboxOption(values, index, '--host');
+      index += 1;
+    } else if (value === '--lease-ms') {
+      result.leaseMs = Number(readInboxOption(values, index, '--lease-ms'));
+      if (!Number.isFinite(result.leaseMs) || result.leaseMs <= 0) {
+        throw new Error('--lease-ms must be a positive number.');
+      }
+      index += 1;
+    } else if (value === '--claimed-path' || value === '--path') {
+      claimedPaths.push(readInboxOption(values, index, value));
+      index += 1;
+    } else if (value === '--reason') {
+      result.reason = readInboxOption(values, index, '--reason');
+      index += 1;
+    } else if (value === '--override-stale') {
+      result.overrideStale = true;
+    } else if (value === '--allow-conflict-copies') {
+      result.allowConflictCopies = true;
+    } else {
+      processorParts.push(value);
+    }
+  }
+
+  if (!result.processor) result.processor = processorParts.join(' ').trim();
+  return result;
+}
+
 export function parseInboxCompleteValues(values = []) {
   const processed = [];
+  const claimedPaths = [];
   const summaryParts = [];
+  const result = {
+    processed,
+    claimedPaths,
+    summary: '',
+    runId: '',
+    processor: '',
+    host: '',
+    leaseMs: undefined,
+    partial: false,
+    overrideMissingLock: false,
+    reason: '',
+    allowConflictCopies: false
+  };
 
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
 
     if (value === '--processed') {
-      const processedPath = values[index + 1];
-      if (!processedPath || processedPath.startsWith('--')) {
-        throw new Error('Missing value for --processed.');
-      }
-      processed.push(processedPath);
+      processed.push(readInboxOption(values, index, '--processed'));
       index += 1;
-      continue;
+    } else if (value === '--run-id') {
+      result.runId = readInboxOption(values, index, '--run-id');
+      index += 1;
+    } else if (value === '--processor' || value === '--claimed-by' || value === '--actor') {
+      result.processor = readInboxOption(values, index, value);
+      index += 1;
+    } else if (value === '--host') {
+      result.host = readInboxOption(values, index, '--host');
+      index += 1;
+    } else if (value === '--lease-ms') {
+      result.leaseMs = Number(readInboxOption(values, index, '--lease-ms'));
+      if (!Number.isFinite(result.leaseMs) || result.leaseMs <= 0) {
+        throw new Error('--lease-ms must be a positive number.');
+      }
+      index += 1;
+    } else if (value === '--partial') {
+      result.partial = true;
+    } else if (value === '--override-missing-lock') {
+      result.overrideMissingLock = true;
+    } else if (value === '--reason') {
+      result.reason = readInboxOption(values, index, '--reason');
+      index += 1;
+    } else if (value === '--allow-conflict-copies') {
+      result.allowConflictCopies = true;
+    } else {
+      summaryParts.push(value);
     }
-
-    summaryParts.push(value);
   }
 
-  return {
-    processed,
-    summary: summaryParts.join(' ').trim()
-  };
+  result.summary = summaryParts.join(' ').trim();
+  return result;
 }
 
 if (isDirectRun) {
@@ -800,7 +1060,8 @@ if (isDirectRun) {
       break;
     case 'synthesise': {
       const target = subcommand || 'the requested target';
-      const personaInstruction = subcommand === 'inbox' ? ' Treat `6-raw/inbox/` as the flat capture/drop zone; legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, or `new/` are still valid unprocessed input in existing workspaces. If user/customer signals are relevant to a durable user type, update or create evidence-backed personas in `4-context/personas.md`. If internal stakeholder signals, org-chart facts, leadership asks, or update preferences are relevant, update or create evidence-backed stakeholder memory in `4-context/stakeholders.md`. If relevant `2-summaries/` or `3-indexes/` files are blank, placeholder-only, or still contain starter-template content, treat that as a material top-layer gap and populate them from the synthesised durable context. When complete, always run `mole inbox complete --processed <path> ... "summary"` with one processed path for each inbox item actually processed so a JSON receipt and metrics are written.' : '';
+      if (subcommand === 'inbox') console.log('Shared-folder runs must claim a run ID first, checkpoint promoted paths, and complete only with the active owned claim. Use an explicit stale-lock or missing-lock override with a reason only after checking sync history.');
+      const personaInstruction = subcommand === 'inbox' ? ' Treat `6-raw/inbox/` as the flat capture/drop zone; legacy subfolders such as `quick-notes/`, `messages/`, `observations/`, or `new/` are still valid unprocessed input in existing workspaces. If user/customer signals are relevant to a durable user type, update or create evidence-backed personas in `4-context/personas.md`. If internal stakeholder signals, org-chart facts, leadership asks, or update preferences are relevant, update or create evidence-backed stakeholder memory in `4-context/stakeholders.md`. If relevant `2-summaries/` or `3-indexes/` files are blank, placeholder-only, or still contain starter-template content, treat that as a material top-layer gap and populate them from the synthesised durable context. Keep the returned run ID, checkpoint paths as they are safely promoted, and complete with `mole inbox complete --run-id <run-id> --processor "Your Name" --processed <path> ... "summary"`; normal completion requires the active owned claim.' : '';
       console.log(`Suggested agent instruction:\n\nBefore synthesis, validate the workspace root with \`mole doctor\` and run \`mole inbox audit\`. Treat every recursively discovered non-README file outside \`6-raw/inbox/archive/\` as a candidate. Reconcile the audit's candidate list against the paths you actually process, explicitly report skipped paths, and rerun \`mole inbox audit\` before finishing; do not declare a no-op while unexplained unprocessed files remain. Then synthesise ${target} using the Mole operating model: capture low, distil up, retrieve top-down.${personaInstruction}`);
       break;
     }

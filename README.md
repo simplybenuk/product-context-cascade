@@ -99,9 +99,12 @@ After installing skills, ask your agent for Mole-specific work such as:
 | `mole create product-update [output-path]` | Creates a product update draft from the product update template. |
 | `mole synthesise <target>` | Prints an agent instruction for synthesising a target using the Mole operating model. |
 | `mole review <target>` | Prints an agent instruction for reviewing a target and surfacing next actions. |
-| `mole inbox claim [processor]` | Claims inbox processing with a lightweight file lock. |
-| `mole inbox audit` | Recursively audits the live inbox and reports processed versus unexplained files. |
-| `mole inbox complete [--processed <path>] [summary]` | Writes a processing receipt, records processed inbox paths in local metrics, and releases the inbox lock. |
+| `mole inbox claim [processor]` | Claims a run with a leased, owned lock and returns its `run_id`. |
+| `mole inbox heartbeat --run-id <id>` | Renews the matching active run lease for a long processing pass. |
+| `mole inbox checkpoint --run-id <id> [--processed <path>]` | Saves partial progress in the matching active run for restart-safe processing. |
+| `mole inbox audit` | Recursively audits live files, leases, sync conflicts, overrides, and receipts. |
+| `mole inbox complete [options] [summary]` | Writes one idempotent receipt for the owned run, records metrics, and releases its lock. |
+| `mole inbox override-stale [options]` | Replaces an expired lock only after an explicit, auditable recovery decision. |
 | `mole metrics backfill` | Rebuilds local metrics from inbox processing receipts that already contain processed paths. |
 | `mole upgrade [version]` | Updates the globally installed Mole CLI from a stable release tag. With no version, it reuses the installed CLI's version tag. |
 
@@ -161,14 +164,36 @@ Mole tracks lightweight local processing metrics under `governance/metrics/`. Me
 When finishing inbox work, include each inbox item that was actually processed:
 
 ```bash
-mole inbox complete --processed 6-raw/inbox/a.md "Promoted one customer signal"
-
-Before and after synthesis, run `mole inbox audit`. It validates the workspace root, recursively scans the live inbox, excludes only the instructional root README and retained archive content, and reports any files not explained by processing receipts. Do not declare a no-op while the final audit reports unexplained files.
+mole inbox claim "Your Name"
+mole inbox checkpoint --run-id <run-id> --processor "Your Name" --processed 6-raw/inbox/a.md
+mole inbox complete --run-id <run-id> --processor "Your Name" --processed 6-raw/inbox/a.md "Promoted one customer signal"
 ```
+
+Before and after synthesis, run `mole inbox audit`. It validates the workspace root, recursively scans the live inbox, excludes only the instructional root README and retained archive content, and reports files not explained by processing receipts. Do not declare a no-op while the final audit reports unexplained files.
 
 Use repeated `--processed` flags for multiple items. Do not include items that were only inspected, skipped, or left for later. The local dashboard is available at `governance/metrics/dashboard.html`.
 
 For existing workspaces, run `mole metrics backfill` after upgrading to rebuild metrics from historical `governance/run-receipts/inbox-processing/` receipts. Backfill counts only receipt `processed` paths with valid completion dates; it does not infer from raw inbox folders or read raw insight content.
+
+## Shared-folder processing
+
+The inbox workflow works in a local folder and in a folder synced by OneDrive, SharePoint, Google Drive, Dropbox, or a similar client. The lock is still a set of files, not a service-side distributed lock. Each mutating operation serializes local lock updates and verifies the complete lock state plus its monotonic version before and after writing, but a sync client can still delay, duplicate, or reorder file changes.
+
+For every processing pass:
+
+1. Run `mole doctor` and `mole inbox audit`.
+2. Claim a run and keep its `run_id`: `mole inbox claim "Your Name"`.
+3. Pass the exact returned `--run-id` and `--processor` to every heartbeat, checkpoint, and completion. These mutating commands refuse a missing, malformed, or different run ID. Checkpoint each promoted path so a restart can skip paths already recorded in `processed_paths`.
+4. Complete only after the promoted output and retrieval receipt exist. The receipt stores the run, lease, claimed paths, processed paths, unresolved paths, and lock snapshot.
+5. Run `mole inbox audit` again.
+
+Normal completion refuses a missing, expired, foreign, duplicate, or conflicted state. If a lease is stale, inspect the folder's sync history and preserve all copies before using `mole inbox override-stale --run-id <new-run-id> --reason "..."`; the replacement ID must not already have a completion receipt. If the lock is missing, use `--override-missing-lock --run-id <run-id> --reason "..."` only when the run history is clear. Run IDs are validated before they become receipt filenames. Each override records the actor, host, time, reason, replacement run, and replaced lock under `governance/run-receipts/inbox-processing/overrides/`.
+
+Mole never deletes or moves source files to resolve a sync conflict. Conflict-named source files, lock copies, and duplicate receipt files are reported by `mole inbox audit`; keep every copy until a person decides how to handle it.
+
+The audit also fails closed when receipts from different run IDs claim the same canonical inbox path. Those split-brain paths are excluded from the normal processed count, and metrics backfill reports them without counting them. Malformed override JSON is likewise reported as invalid rather than silently omitted.
+
+Expired locks from older Mole versions cannot be completed normally. An explicit stale override can migrate a structurally recognizable legacy lock into the current lease format while preserving the original lock in the audit record; incomplete receipts with processed paths are never used as processing evidence.
 
 ## How Mole Works
 
